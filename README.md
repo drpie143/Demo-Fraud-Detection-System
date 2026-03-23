@@ -4,8 +4,6 @@ A **multi-agent AI pipeline** for real-time bank fraud detection, built entirely
 
 Five specialized AI agents collaborate through LangGraph to screen, investigate, and adjudicate every transaction across a 3-phase architecture: **Rule-Based Screening → AI Investigation → Enforcement**.
 
-**Live Demo:** [Frontend (Vercel)](https://v0-fraud-detection-interface.vercel.app) · [Backend API (Render)](https://demo-fraud-detection-system.onrender.com)
-
 ---
 
 ## 🏗️ Architecture
