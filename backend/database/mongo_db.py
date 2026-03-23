@@ -281,7 +281,7 @@ class MongoDBClient:
         Executor gọi khi làm task BEHAVIORAL_ANALYSIS.
         """
         if self._use_simulator:
-            from simulators import dynamodb_sim
+            from database.simulators import dynamodb_sim
             return dynamodb_sim.get_customer_profile(account_id)
 
         try:
@@ -298,7 +298,7 @@ class MongoDBClient:
             }
         except Exception as e:
             print(f"⚠️  MongoDB query error: {e}")
-            from simulators import dynamodb_sim
+            from database.simulators import dynamodb_sim
             return dynamodb_sim.get_customer_profile(account_id)
 
     def get_transaction_history(self, account_id: str, limit: int = 20) -> list[dict]:
@@ -311,7 +311,7 @@ class MongoDBClient:
         - VELOCITY_CHECK: Đếm tần suất
         """
         if self._use_simulator:
-            from simulators import dynamodb_sim
+            from database.simulators import dynamodb_sim
             return dynamodb_sim.get_transaction_history(account_id, limit)
 
         try:
@@ -328,7 +328,7 @@ class MongoDBClient:
             return results
         except Exception as e:
             print(f"⚠️  MongoDB query error: {e}")
-            from simulators import dynamodb_sim
+            from database.simulators import dynamodb_sim
             return dynamodb_sim.get_transaction_history(account_id, limit)
 
     def get_related_accounts(self, account_id: str) -> list[str]:
@@ -336,7 +336,7 @@ class MongoDBClient:
         Tìm tài khoản liên quan (dựa trên lịch sử GD).
         """
         if self._use_simulator:
-            from simulators import dynamodb_sim
+            from database.simulators import dynamodb_sim
             return dynamodb_sim.get_related_accounts(account_id)
 
         try:
@@ -351,7 +351,7 @@ class MongoDBClient:
             return list(related)
         except Exception as e:
             print(f"⚠️  MongoDB query error: {e}")
-            from simulators import dynamodb_sim
+            from database.simulators import dynamodb_sim
             return dynamodb_sim.get_related_accounts(account_id)
 
     def run_query(self, collection: str, filter_dict: dict, limit: int = 20) -> list[dict]:
@@ -372,7 +372,7 @@ class MongoDBClient:
             return []
 
         if self._use_simulator:
-            from simulators import dynamodb_sim
+            from database.simulators import dynamodb_sim
             if collection == "customer_profiles":
                 acc = filter_dict.get("_id", filter_dict.get("customer_id", ""))
                 if acc:
@@ -419,7 +419,7 @@ class MongoDBClient:
         Updates transaction_history so investigation queries find this txn.
         """
         if self._use_simulator:
-            from simulators import dynamodb_sim
+            from database.simulators import dynamodb_sim
             dynamodb_sim.ingest_transaction(sender_id, receiver_id, amount,
                                             description=description, channel=channel)
             return
@@ -439,7 +439,7 @@ class MongoDBClient:
             print(f"   📊 MongoDB: ingested txn {sender_id} → {receiver_id} (${amount:,.2f})")
         except Exception as e:
             print(f"⚠️  MongoDB ingest error: {e}")
-            from simulators import dynamodb_sim
+            from database.simulators import dynamodb_sim
             dynamodb_sim.ingest_transaction(sender_id, receiver_id, amount,
                                             description=description, channel=channel)
 

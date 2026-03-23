@@ -232,7 +232,7 @@ class Neo4jClient:
         Trả về format giống NeptuneSimulator để backward compatible.
         """
         if self._use_simulator:
-            from simulators import neptune_sim
+            from database.simulators import neptune_sim
             return neptune_sim.get_neighbors(node_id, depth)
         
         with self.driver.session() as session:
@@ -313,7 +313,7 @@ class Neo4jClient:
         RED FLAG: Nhiều accounts dùng chung 1 device → cùng 1 người.
         """
         if self._use_simulator:
-            from simulators import neptune_sim
+            from database.simulators import neptune_sim
             return neptune_sim.find_shared_entities(node_id, entity_type)
         
         label = "Device" if entity_type == "device" else "IP"
@@ -351,7 +351,7 @@ class Neo4jClient:
         Pattern: A → B → C → A (tiền quay vòng để rửa)
         """
         if self._use_simulator:
-            from simulators import neptune_sim
+            from database.simulators import neptune_sim
             return neptune_sim.detect_circular_flows(node_id)
         
         with self.driver.session() as session:
@@ -378,7 +378,7 @@ class Neo4jClient:
         Creates Account nodes (MERGE) and TRANSFERS_TO relationship.
         """
         if self._use_simulator:
-            from simulators import neptune_sim
+            from database.simulators import neptune_sim
             neptune_sim.ingest_transaction(
                 sender_id, receiver_id, amount,
                 sender_name=sender_name, receiver_name=receiver_name,
@@ -410,7 +410,7 @@ class Neo4jClient:
         Đây là signal mạnh cho fraud: kết nối đến known bad actors.
         """
         if self._use_simulator:
-            from simulators import neptune_sim
+            from database.simulators import neptune_sim
             neighbors = neptune_sim.get_neighbors(node_id, depth=2)
             connections = []
             for nid, info in neighbors.get("nodes", {}).items():

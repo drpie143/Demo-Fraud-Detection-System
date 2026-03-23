@@ -246,7 +246,7 @@ class VectorStore:
         """
         if not self.collection or self.collection.count() == 0:
             # Fallback nếu ChromaDB chưa có data
-            from simulators import opensearch_sim
+            from database.simulators import opensearch_sim
             return opensearch_sim.search(query, top_k)
         
         try:
@@ -276,7 +276,7 @@ class VectorStore:
             
         except Exception as e:
             print(f"⚠️  ChromaDB search error: {e}")
-            from simulators import opensearch_sim
+            from database.simulators import opensearch_sim
             return opensearch_sim.search(query, top_k)
     
     def index_new_pattern(self, pattern: dict) -> str:
@@ -298,7 +298,7 @@ class VectorStore:
         
         if not self.collection:
             # Fallback
-            from simulators import opensearch_sim
+            from database.simulators import opensearch_sim
             return opensearch_sim.index_new_pattern(pattern)
         
         try:
