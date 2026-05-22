@@ -1,220 +1,202 @@
-# 🏦 Fraud Detection System — Agentic AI
+# Fraud Detection Console
 
-A **multi-agent AI pipeline** for real-time bank fraud detection, built entirely on **free-tier cloud services**.
+Dataset-backed banking fraud detection demo with a FastAPI backend, a Next.js operations console, and a three-phase agentic investigation pipeline.
 
-Five specialized AI agents collaborate through LangGraph to screen, investigate, and adjudicate every transaction across a 3-phase architecture: **Rule-Based Screening → AI Investigation → Enforcement**.
+The project runs from the real dataset in `final.csv` and `evaluation/data/processed_seed_data.json`. Primary demo scenarios use real account IDs such as `C8126703807`, `C2972777054`, and `C2006456468`; the UI and main tests no longer rely on synthetic `ACC_*` cases.
 
----
+## What It Does
 
-## 🏗️ Architecture
+- Phase 1: deterministic rule screening with dataset-scale thresholds, whitelist/blacklist, velocity, risk score, shared infrastructure, and balance-drain signals.
+- Phase 2: planner/executor/vision/report agents collect and summarize evidence when a transaction needs investigation.
+- Phase 3: detective adjudication returns `allow`, `block`, or `escalate`, then updates fallback controls.
+- Offline mode: with `DEMO_MODE=true`, cloud services are skipped and local simulators are seeded from the real dataset.
+- UI: a banking simulator on the left and a fraud operations console on the right, streaming pipeline events live.
 
-```
-                         Transaction
-                              │
-                    ┌─────────▼──────────┐
-                    │  PHASE 1: Screening │  ← Redis Cloud
-                    │  (Rule-Based)       │
-                    └────────┬────────────┘
-                             │
-                ┌────────────┼────────────┐
-                │            │            │
-             🟢 GREEN    🟡 YELLOW    🔴 RED
-             ALLOW       │            BLOCK
-                         ▼
-              ┌──────────────────────┐
-              │  PHASE 2: AI Agents  │  ← LangGraph Loop
-              │                      │
-              │  Planner  → Executor │  ← Gemini 2.5 Flash
-              │  Vision   → Report   │  ← Neo4j + MongoDB + ChromaDB
-              │  Detective           │
-              └──────────┬───────────┘
-                         │
-              ┌──────────▼───────────┐
-              │  PHASE 3: Enforce    │
-              │  BLOCK / ALLOW /     │
-              │  ESCALATE            │
-              └──────────────────────┘
-```
+## Project Structure
 
-### Pipeline Details
-
-| Phase | Description | Technology |
-|-------|-------------|------------|
-| **Phase 1** | Real-time screening: whitelist/blacklist checks, risk scoring, velocity tracking, amount thresholds, VPN/Tor detection | Redis Cloud |
-| **Phase 2** | AI investigation (YELLOW only): Planner generates hypothesis → Executor queries DBs in parallel → Vision cross-references evidence → Report generates audit report → Detective makes final decision | Gemini 2.5 Flash, Neo4j, MongoDB, ChromaDB |
-| **Phase 3** | Enforcement: BLOCK → blacklist + increase risk score + index pattern. ALLOW → whitelist + decrease risk score. ESCALATE → hold + route to human review | Redis Cloud, ChromaDB |
-
----
-
-## 🤖 5 AI Agents
-
-| Agent | Role |
-|-------|------|
-| **Planner** | Analyzes Phase 1 context, generates hypotheses (structuring, money laundering, ATO), decomposes into specific investigation tasks |
-| **Executor** | True AI agent — Gemini autonomously generates Cypher/MongoDB/ChromaDB queries, executes via 12 pre-defined DB tools, runs tasks **in parallel** with pool of API keys |
-| **Vision** | Cross-references all evidence from Executor, detects patterns invisible to individual tasks (e.g., star topology + structuring = mule network) |
-| **Report** | Generates detailed, audit-ready investigation reports in natural language |
-| **Detective** | Final adjudicator — independently evaluates the report, makes BLOCK/ALLOW/ESCALATE decision, triggers Phase 3 enforcement |
-
----
-
-## ⚡ Tech Stack (Zero-Cost)
-
-| Component | Technology | Tier |
-|-----------|-----------|------|
-| LLM (all agents) | Google Gemini 2.5 Flash | Free: 15 req/min |
-| Graph DB | Neo4j AuraDB | Free: 200K nodes |
-| Vector Store / RAG | ChromaDB Cloud | Free tier |
-| Document DB | MongoDB Atlas | Free: M0 512MB |
-| Cache / Rules | Redis Cloud | Free tier |
-| Orchestration | LangGraph (StateGraph) | Open source |
-| Backend | FastAPI + Uvicorn | — |
-| Frontend | Next.js + shadcn/ui | — |
-| Hosting | Vercel (frontend) + Render (backend) | Free tier |
-
----
-
-## 📁 Project Structure
-
-```
-├── backend/
-│   ├── agents/
-│   │   ├── planner_agent.py      # Planner Agent (investigation planning)
-│   │   ├── executor_agent.py     # Executor Agent (parallel DB queries, 12 tools)
-│   │   ├── detective_agent.py    # Detective Agent (final adjudication)
-│   │   ├── vision_agent.py       # Vision Agent (cross-reference analysis)
-│   │   └── report_agent.py       # Report Agent (NL report generation)
-│   ├── database/
-│   │   ├── graph_db.py           # Neo4j AuraDB client
-│   │   ├── mongo_db.py           # MongoDB Atlas client
-│   │   ├── vector_store.py       # ChromaDB Cloud client
-│   │   └── simulators.py         # In-memory fallback simulators + Redis
-│   ├── config.py                 # Environment variable management
-│   ├── models.py                 # Pydantic models (Transaction, Phase1Result, ...)
-│   ├── orchestrator.py           # LangGraph pipeline (Phase 1 → 2 → 3)
-│   ├── llm_providers.py          # Gemini wrapper (thread-safe, API key pool)
-│   ├── main.py                   # Entrypoint: CLI demo + FastAPI server
-│   ├── setup_demo.py             # Seed synthetic demo data
-│   ├── requirements.txt          # Python dependencies
-│   └── Dockerfile                # Docker config for Render
-├── frontend/                     # Next.js frontend (deployed on Vercel)
-│   ├── app/                      # Next.js app router
-│   ├── components/               # React components (banking-app, pipeline view)
-│   └── package.json
-├── .env.example                  # Environment variable template
-└── .gitignore
+```text
+configs/                     Runtime settings and environment parsing
+core/
+  agents/                    Planner, Executor, Vision, Report, Detective
+  orchestration/pipeline.py   LangGraph pipeline and Phase 1 rules
+  schemas/models.py           Pydantic models
+infrastructure/
+  databases/                  Redis/Neo4j/MongoDB/Chroma clients and simulators
+  llm/gemini.py               Gemini wrapper with deterministic fallback
+services/
+  api/server.py               FastAPI app and CLI demo entry
+  ui/                         Next.js fraud operations console
+evaluation/
+  data/processed_seed_data.json
+  build_seed_data.py          Rebuild processed seed data from final.csv
+  evaluate_dataset.py         Dataset evaluation metrics
+tests/                        Backend/API/pipeline smoke and acceptance tests
+final.csv                     Source transaction dataset
+main.py                       `python main.py` or `python main.py --serve`
+render.yaml                   Render backend deployment blueprint
 ```
 
----
+## Quick Start
 
-## 🚀 Getting Started
-
-### 1. Clone & Setup
-
-```bash
-git clone https://github.com/drpie143/Demo-Fraud-Detection-System.git
-cd Demo-Fraud-Detection-System
+```powershell
 python -m venv .venv
-# Windows
-.\.venv\Scripts\activate
-# Linux/Mac
-source .venv/bin/activate
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+Copy-Item .env.example .env
+python main.py --serve
 ```
 
-### 2. Install Dependencies
+In another terminal:
 
-```bash
-pip install -r backend/requirements.txt
+```powershell
+cd services\ui
+npm install
+npm run dev
 ```
 
-### 3. Configure Environment Variables
+Open:
 
-```bash
-cp .env.example .env
+```text
+Frontend: http://localhost:3000
+Backend:  http://localhost:8000
+Docs:     http://localhost:8000/docs
 ```
 
-Edit `.env` and fill in your API keys:
+## Demo Scenarios
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `GEMINI_API_KEY` | ✅ | Google AI Studio → [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
-| `GEMINI_API_KEY_EXECUTOR_POOL` | ⚪ | Comma-separated keys for parallel executor (up to 5) |
-| `NEO4J_URI` | ✅ | Neo4j AuraDB URI |
-| `NEO4J_USER` | ✅ | Neo4j username |
-| `NEO4J_PASSWORD` | ✅ | Neo4j password |
-| `CHROMA_API_KEY` | ✅ | ChromaDB Cloud API key |
-| `CHROMA_TENANT` | ✅ | ChromaDB tenant ID |
-| `CHROMA_DATABASE` | ✅ | ChromaDB database name |
-| `MONGODB_URI` | ✅ | MongoDB Atlas connection string |
-| `REDIS_HOST` | ⚪ | Redis Cloud host (omit to use simulator) |
-| `REDIS_PASSWORD` | ⚪ | Redis Cloud password |
+The API exposes these dataset-backed scenarios at `GET /api/scenarios`:
 
-> **Demo Mode**: If credentials are missing, the system automatically falls back to in-memory simulators — the demo runs fully offline without any cloud services.
+| Scenario | Transaction | Expected |
+| --- | --- | --- |
+| Clean small payment | `C8126703807 -> C1409103719`, amount `144.88` | `allow` |
+| Fraud cluster transfer | `C2972777054 -> C8992641070`, amount `27000` | `block` |
+| Second fraud cluster | `C2006456468 -> C3259274595`, amount `22000` | `block` |
+| High-value legitimate transfer | selected from the largest non-fraud dataset row | `allow` |
 
-### 4. Run
+## API
 
-```bash
-# Backend — FastAPI on http://localhost:8000
-python backend/main.py --serve
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Runtime health and dataset summary |
+| `GET` | `/api/scenarios` | Dataset-backed demo scenarios |
+| `POST` | `/api/login` | Demo login by real account ID |
+| `POST` | `/api/fraud-detection` | SSE streaming fraud pipeline for the UI |
+| `POST` | `/transaction` | JSON transaction processing |
+| `POST` | `/demo/{n}` | Run a scenario by number |
 
-# Frontend — Next.js on http://localhost:3000
-cd frontend && npm install && npm run dev
+## Verification
 
-# CLI Demo — runs 3 demo scenarios in terminal
-python backend/main.py
+```powershell
+python -m compileall -q main.py configs core infrastructure services\api evaluation
+pytest -q
+
+cd services\ui
+npx.cmd tsc --noEmit
+npm.cmd run build
+npm.cmd run lint
 ```
 
----
+Current backend test coverage includes:
 
-## 🎯 Demo Scenarios
+- import/startup safety for `main` and FastAPI app creation
+- dataset summary and real demo scenario IDs
+- `/health`, `/api/scenarios`, `/api/login`, bad amount handling, and SSE completion
+- acceptance decisions for the main clean/fraud/high-value scenarios
+- regression coverage for low-risk balance-drain history false positives
 
-| # | Name | Transaction | Expected Result |
-|---|------|-------------|-----------------|
-| 1 | **Normal Transaction** | ACC_001 (whitelisted, 5yr) → ACC_002, $250 | 🟢 GREEN → ALLOW |
-| 2 | **Structuring Pattern** | ACC_007 (45-day, high velocity) → ACC_002, $950 | 🟡 YELLOW → Investigation → BLOCK |
-| 3 | **Money Laundering** | ACC_050 (VPN/Tor, KYC pending) → ACC_666 (blacklisted), $25,000 | 🔴 RED → BLOCK |
+This is strong enough for an MVP/demo. It is not yet a bank-grade test suite: add browser E2E, load tests, auth/security tests, and cloud-service integration tests before treating it as production software.
 
----
+## Benchmark
 
-## 🔌 API Endpoints
+Run the full dataset benchmark:
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/` | API information |
-| `GET` | `/health` | Health check |
-| `POST` | `/api/fraud-detection` | Process transaction with SSE streaming |
-| `POST` | `/api/login` | Login with account ID |
-| `GET` | `/scenarios` | List available demo scenarios |
-| `POST` | `/demo/{n}` | Run demo scenario 1–3 |
-| `POST` | `/transaction` | Process a single transaction (JSON response) |
+```powershell
+python evaluation\evaluate_dataset.py --limit 0
+```
 
----
+Latest local full-dataset result on `final.csv`:
 
-## 🔄 Fallback & Demo Mode
+| Model | Rows | TP | TN | FP | FN | Precision | Recall | F1 | Accuracy |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Final pipeline | 701 | 202 | 498 | 1 | 0 | 0.9951 | 1.0000 | 0.9975 | 0.9986 |
+| Rule-only baseline | 701 | 202 | 498 | 1 | 0 | 0.9951 | 1.0000 | 0.9975 | 0.9986 |
 
-All database clients include in-memory simulators as fallback:
+Interpretation: fraud recall is saturated on this dataset, so the pipeline matches the rule-only recall rather than exceeding it. The extra value of the pipeline is explainability, evidence capture, SSE visibility, and final adjudication. The output is written to `evaluation/results/dataset_metrics.json`, which is ignored by git.
 
-| Cloud Service | Simulator Fallback |
-|---------------|-------------------|
-| Redis Cloud | `RedisSimulator` — whitelist, blacklist, risk scores, velocity |
-| Neo4j AuraDB | `NeptuneSimulator` — graph nodes, edges, shared entities |
-| MongoDB Atlas | `DynamoDBSimulator` — customer profiles, transaction history |
-| ChromaDB Cloud | `OpenSearchSimulator` — fraud patterns, past cases |
+## Online Hosting
 
-When credentials are missing, the system automatically uses simulators — fully offline, no external services required.
+Recommended split for the current monorepo:
 
----
+- Backend: deploy the repo root to Render or Railway.
+- Frontend: deploy `services/ui` to Vercel.
+- Keep the folder structure as-is. The old `frontend/` and `backend/` names are not required; modern hosts let you set a root directory per service.
 
-## 🚀 Deployment
+### Backend On Render
 
-### Frontend (Vercel)
-- Connect this repo on Vercel
-- Set **Root Directory** = `frontend`
-- Framework: Next.js (auto-detected)
+This repo includes `render.yaml`, so Render can create the API service from the root.
 
-### Backend (Render)
-- Connect this repo on Render
-- Set **Root Directory** = `backend`
-- Build Command: `pip install -r requirements.txt`
-- Start Command: `python main.py --serve`
-- Add all `.env` variables in Render Environment settings
+Manual settings if you do not use the blueprint:
+
+```text
+Root directory: .
+Build command: pip install -r requirements.txt
+Start command: python -m uvicorn services.api.server:app --host 0.0.0.0 --port $PORT
+Health check: /health
+```
+
+Minimum environment variables:
+
+```text
+PYTHON_VERSION=3.12.8
+DEMO_MODE=true
+API_HOST=0.0.0.0
+FRONTEND_URL=https://your-vercel-app.vercel.app
+```
+
+Render injects `PORT`; the app reads it automatically. Keep `DEMO_MODE=true` for a reliable online demo without Redis/Neo4j/MongoDB/Chroma/Gemini credentials. Set `DEMO_MODE=false` only after adding the cloud credentials from `.env.example`.
+
+### Frontend On Vercel
+
+Create a Vercel project from the same Git repo and set:
+
+```text
+Root directory: services/ui
+Install command: npm ci
+Build command: npm run build
+Output directory: .next
+```
+
+Environment variable:
+
+```text
+BACKEND_URL=https://your-render-api.onrender.com
+```
+
+The UI calls local `/api/*` routes; Next.js rewrites them to `BACKEND_URL`. That keeps browser calls same-origin and reduces CORS issues. After Vercel gives you the final URL, put that URL in Render's `FRONTEND_URL`.
+
+### Railway Alternative
+
+Create two services from the same repo:
+
+- API service: root `.`, start command `python -m uvicorn services.api.server:app --host 0.0.0.0 --port $PORT`
+- UI service: root `services/ui`, build `npm run build`, start `npm run start`
+
+Railway and Vercel both support monorepo root-directory settings:
+
+- Vercel monorepos: https://vercel.com/docs/monorepos
+- Render web services and port binding: https://render.com/docs/web-services
+- Render Python versions: https://render.com/docs/python-version
+- Railway monorepos: https://docs.railway.com/deployments/monorepo
+
+## Environment
+
+Use `.env.example` as the template. The default `DEMO_MODE=true` is recommended for local demo, online demo, and testing because it skips network/cloud initialization and seeds simulators from local dataset files.
+
+Set `DEMO_MODE=false` only when cloud credentials are ready for Redis, Neo4j, MongoDB, ChromaDB, and Gemini. Missing or failing cloud services fall back to local simulators where possible.
+
+## Notes
+
+- Python 3.11 or 3.12 is recommended. Python 3.14 currently emits compatibility warnings from LangChain/Pydantic v1.
+- The current Gemini package `google-generativeai` emits a deprecation warning; migrating to `google.genai` is the next cleanup task.
+- `services/ui/package.json` uses `npm run lint` as a strict TypeScript check so the project works with Next 16 without the removed legacy Next lint command.

@@ -4,6 +4,7 @@ venv/
 __pycache__/
 *.pyc
 *.egg-info/
+.pytest_cache/
 dist/
 build/
 
@@ -14,6 +15,7 @@ build/
 # Node
 node_modules/
 .next/
+*.tsbuildinfo
 
 # IDE
 .vscode/
@@ -24,3 +26,4 @@ extract_diagram.py
 *.pdf
 *.png
 frontend-design/
+evaluation/results/
