@@ -141,6 +141,17 @@ const statusCopy: Record<string, string> = {
   pending: 'Processing transfer',
 };
 
+const readApiError = async (res: Response, fallback: string) => {
+  const text = await res.text();
+  if (!text) return fallback;
+  try {
+    const data = JSON.parse(text);
+    return data.detail || data.message || fallback;
+  } catch {
+    return text.length > 180 ? fallback : text;
+  }
+};
+
 export function BankingApp({
   scenarios = [],
   onTransactionSubmit,
@@ -223,8 +234,11 @@ export function BankingApp({
       });
 
       if (!res.ok) {
-        const errorData = await res.json();
-        setLoginError(errorData.detail || 'Login failed');
+        const detail = await readApiError(
+          res,
+          `Backend API returned ${res.status}. Check Render URL and Vercel BACKEND_URL.`,
+        );
+        setLoginError(detail);
         return;
       }
 
@@ -250,8 +264,9 @@ export function BankingApp({
       if (matchingScenario) applyScenario(matchingScenario);
 
       setStep('transfer-details');
-    } catch {
-      setLoginError('Cannot connect to backend API.');
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'unknown network error';
+      setLoginError(`Cannot connect to backend API: ${detail}`);
     } finally {
       setIsLoggingIn(false);
     }
