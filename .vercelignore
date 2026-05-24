@@ -1,0 +1,13 @@
+.env
+.env.local
+.git
+.pytest_cache
+.venv
+venv
+__pycache__
+*.pyc
+node_modules
+runtime
+evaluation/results
+services/ui/.next
+services/ui/node_modules
