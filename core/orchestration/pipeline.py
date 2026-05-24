@@ -620,6 +620,70 @@ def route_after_evaluate(state: GraphState) -> str:
 # NODE: REPORT GENERATOR (Gemini 2.5 Flash)
 # =====================================================================
 
+def current_transaction_evidence(state: GraphState) -> ExecutorResult | None:
+    """Convert current transaction and Phase 1 signals into Phase 2 evidence."""
+
+    txn = Transaction(**state["transaction"])
+    phase1 = state.get("phase1_result", {}) or {}
+    indicators: list[str] = []
+    notes: list[str] = []
+
+    for rule in phase1.get("triggered_rules", []):
+        rule_name = rule.get("rule", "")
+        detail = rule.get("detail", "")
+        if rule_name == "BALANCE_DRAIN":
+            indicators.append("CURRENT_BALANCE_DRAIN: sender balance drained in this transaction")
+        elif rule_name in {"HIGH_VELOCITY", "SENDER_BLACKLISTED", "RECEIVER_BLACKLISTED"}:
+            indicators.append(f"PHASE1_{rule_name}: {detail}")
+        elif rule_name in {"LARGE_AMOUNT", "ELEVATED_AMOUNT", "STRUCTURING_SUSPICION"}:
+            notes.append(f"{rule_name}: {detail}")
+
+    if (
+        txn.sender_balance_before is not None
+        and txn.sender_balance_before > 0
+        and txn.sender_balance_after is not None
+        and txn.sender_balance_after <= 500
+        and abs(txn.amount - txn.sender_balance_before) <= max(1.0, txn.sender_balance_before * 0.001)
+    ):
+        indicators.append(
+            "FULL_BALANCE_TRANSFER: amount equals available sender balance and leaves sender near zero"
+        )
+
+    if (
+        txn.transaction_type.upper() == "TRANSFER"
+        and txn.receiver_balance_before is not None
+        and txn.receiver_balance_after is not None
+        and txn.receiver_balance_before == 0
+        and txn.receiver_balance_after == 0
+        and txn.sender_balance_after is not None
+        and (txn.sender_balance_after <= 500 or txn.amount >= settings.large_amount_threshold)
+    ):
+        indicators.append(
+            "DESTINATION_NOT_CREDITED: transfer drains sender while destination remains zero"
+        )
+
+    if not indicators and not notes:
+        return None
+
+    analysis = (
+        f"Current transaction {txn.transaction_id}: {txn.transaction_type} "
+        f"{txn.sender_id}->{txn.receiver_id} amount={txn.amount:,.2f}. "
+    )
+    if indicators:
+        analysis += "Indicators: " + "; ".join(indicators) + ". "
+    if notes:
+        analysis += "Context: " + "; ".join(notes) + "."
+
+    return ExecutorResult(
+        task_id="current_transaction",
+        task_type=TaskType.AMOUNT_PATTERN,
+        success=True,
+        raw_data={"transaction": txn.model_dump(), "phase1": phase1},
+        analysis=analysis,
+        risk_indicators=indicators,
+    )
+
+
 def report_generator_node(state: GraphState) -> GraphState:
     """
     Report Agent: generate investigation report bằng Gemini.
@@ -627,6 +691,9 @@ def report_generator_node(state: GraphState) -> GraphState:
     request_dict = state.get("investigation_request", {})
     result_dicts = state.get("all_results", [])
     evidence = [ExecutorResult(**r) for r in result_dicts]
+    current_evidence = current_transaction_evidence(state)
+    if current_evidence is not None:
+        evidence.insert(0, current_evidence)
     
     request_id = request_dict.get("request_id", "unknown")
     txn_id = state.get("transaction", {}).get("transaction_id", "unknown")
@@ -793,9 +860,8 @@ class FraudDetectionOrchestrator:
         print(" FRAUD DETECTION SYSTEM - Initializing")
         print("=" * 70)
         
-        # ─── Seed databases ───
-        print("\n📊 Seeding databases...")
-        redis_service.seed_data()
+        # Hydrate in-memory fallback caches from the real dataset on every
+        # startup. Cloud database writes are controlled separately below.
         stats = apply_processed_seed_to_simulators(
             redis_service=redis_service,
             redis_sim=redis_sim,
@@ -804,13 +870,20 @@ class FraudDetectionOrchestrator:
         )
         if stats.get("profiles"):
             print(
-                "   Dataset simulator seed: "
+                "\nDataset fallback cache hydrated: "
                 f"{stats['profiles']} profiles, {stats['transactions']} transactions, "
                 f"{stats['edges']} edges"
             )
-        neo4j_client.seed_demo_data()
-        vector_store.seed_knowledge_base()
-        mongodb_client.seed_demo_data()
+
+        # Cloud seed is intentionally opt-in because it can wipe/reseed remote DBs.
+        if settings.auto_seed_on_startup:
+            print("\n📊 Seeding databases...")
+            redis_service.seed_data()
+            neo4j_client.seed_demo_data()
+            vector_store.seed_knowledge_base()
+            mongodb_client.seed_demo_data()
+        else:
+            print("Database auto-seed skipped (AUTO_SEED_ON_STARTUP=false).")
         
         # ─── Build pipeline ───
         print("\n🔗 Building LangGraph pipeline...")

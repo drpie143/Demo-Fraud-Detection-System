@@ -27,3 +27,4 @@ extract_diagram.py
 *.png
 frontend-design/
 evaluation/results/
+runtime/

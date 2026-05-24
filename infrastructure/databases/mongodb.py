@@ -48,8 +48,10 @@ class MongoDBClient:
         self.client = None
         self.db = None
         self._use_simulator = True
+        self.last_error = ""
 
         if settings.demo_mode:
+            self.last_error = "DEMO_MODE=true"
             print("ℹ️  DEMO_MODE=true → dùng DynamoDBSimulator")
             return
 
@@ -67,12 +69,14 @@ class MongoDBClient:
                 self._use_simulator = False
                 print(f"✅ MongoDB Atlas connected (db: {settings.mongodb_db_name})")
             except Exception as e:
+                self.last_error = str(e)
                 print(f"⚠️  MongoDB connection failed: {e}")
                 print("   → Fallback: dùng DynamoDBSimulator (in-memory)")
                 self.client = None
                 self.db = None
                 self._use_simulator = True
         else:
+            self.last_error = "MONGODB_URI is not configured"
             print("ℹ️  MongoDB URI chưa cấu hình → dùng DynamoDBSimulator")
 
     @property

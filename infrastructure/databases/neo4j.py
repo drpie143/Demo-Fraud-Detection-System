@@ -31,6 +31,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 from configs.settings import settings
+from infrastructure.databases.neo4j_connection import open_neo4j_driver
 
 
 class Neo4jClient:
@@ -62,15 +63,17 @@ class Neo4jClient:
         
         if settings.neo4j_uri and settings.neo4j_password:
             try:
-                from neo4j import GraphDatabase
-                self.driver = GraphDatabase.driver(
-                    settings.neo4j_uri,
-                    auth=(settings.neo4j_user, settings.neo4j_password),
+                result = open_neo4j_driver(
+                    uri=settings.neo4j_uri,
+                    user=settings.neo4j_user,
+                    password=settings.neo4j_password,
+                    allow_self_signed_fallback=settings.neo4j_allow_self_signed_fallback,
                 )
-                # Test connection
-                self.driver.verify_connectivity()
+                self.driver = result.driver
                 self._use_simulator = False
                 print("✅ Neo4j AuraDB connected (cloud-hosted)")
+                if result.used_tls_fallback:
+                    print("   WARNING: Used Neo4j +ssc TLS fallback because +s certificate verification failed")
             except Exception as e:
                 print(f"⚠️  Neo4j connection failed: {e}")
                 print("   → Fallback: dùng NeptuneSimulator (in-memory)")

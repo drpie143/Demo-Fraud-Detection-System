@@ -133,13 +133,66 @@ def create_fastapi_app():
     async def health():
         from configs.settings import settings as runtime_settings
         from infrastructure.databases.chroma import vector_store
+        from infrastructure.databases.mongodb import mongodb_client
         from infrastructure.databases.neo4j import neo4j_client
+        from infrastructure.databases.simulators import redis_service
 
         return {
             "status": "healthy",
+            "mode": "real_services" if not runtime_settings.demo_mode else "demo_simulator",
+            "demo_mode": runtime_settings.demo_mode,
+            "auto_seed_on_startup": runtime_settings.auto_seed_on_startup,
+            "services": {
+                "redis": "connected" if redis_service.is_connected else "simulator",
+                "neo4j": "connected" if neo4j_client.is_connected else "simulator",
+                "mongodb": "connected" if mongodb_client.is_connected else "simulator",
+                "chromadb": "connected" if vector_store.collection else "simulator",
+                "gemini": (
+                    "configured"
+                    if (
+                        not runtime_settings.demo_mode
+                        and any(
+                            [
+                                runtime_settings.gemini_api_key,
+                                runtime_settings.gemini_api_key_planner,
+                                runtime_settings.gemini_api_key_executor,
+                                runtime_settings.gemini_api_key_executor_pool,
+                                runtime_settings.gemini_api_key_detective,
+                                runtime_settings.gemini_api_key_vision,
+                                runtime_settings.gemini_api_key_report,
+                            ]
+                        )
+                    )
+                    else "fallback"
+                ),
+            },
+            "service_errors": {
+                "mongodb": (
+                    mongodb_client.last_error[:700]
+                    if not mongodb_client.is_connected
+                    else ""
+                ),
+            },
             "neo4j": "connected" if neo4j_client.is_connected else "simulator",
             "chromadb": "connected" if vector_store.collection else "simulator",
-            "gemini": "configured" if runtime_settings.gemini_api_key and not runtime_settings.demo_mode else "fallback",
+            "gemini": (
+                "configured"
+                if (
+                    not runtime_settings.demo_mode
+                    and any(
+                        [
+                            runtime_settings.gemini_api_key,
+                            runtime_settings.gemini_api_key_planner,
+                            runtime_settings.gemini_api_key_executor,
+                            runtime_settings.gemini_api_key_executor_pool,
+                            runtime_settings.gemini_api_key_detective,
+                            runtime_settings.gemini_api_key_vision,
+                            runtime_settings.gemini_api_key_report,
+                        ]
+                    )
+                )
+                else "fallback"
+            ),
             "dataset": dataset_summary(),
         }
 

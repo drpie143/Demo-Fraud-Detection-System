@@ -135,6 +135,8 @@ class DetectiveAgent:
             "profile_risk",
             "risky_graph_neighbors",
             "shared_infrastructure",
+            "full_balance_transfer",
+            "destination_not_credited",
         ]
         critical_hits = [term for term in critical_terms if term in risk_text]
         balance_drain_only = (

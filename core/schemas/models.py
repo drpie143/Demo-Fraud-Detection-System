@@ -108,6 +108,9 @@ class Transaction(BaseModel):
     sender_balance_before: Optional[float] = Field(default=None, description="Số dư sender trước GD")
     sender_balance_after: Optional[float] = Field(default=None, description="Số dư sender sau GD")
 
+    receiver_balance_before: Optional[float] = Field(default=None, description="Receiver balance before transaction")
+    receiver_balance_after: Optional[float] = Field(default=None, description="Receiver balance after transaction")
+
     merchant_id: str = Field(default="", description="ID merchant")
     description: str = Field(default="", description="Mô tả giao dịch")
     auth_method: str = Field(default="", description="Phương thức xác thực trong dataset")

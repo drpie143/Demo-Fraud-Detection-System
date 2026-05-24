@@ -1,42 +1,41 @@
 # Fraud Detection Console
 
-Dataset-backed banking fraud detection demo with a FastAPI backend, a Next.js operations console, and a three-phase agentic investigation pipeline.
+Local-first fraud detection console using real dataset accounts, a FastAPI API, a Next.js operations UI, cloud databases, and Gemini-backed investigation agents.
 
-The project runs from the real dataset in `final.csv` and `evaluation/data/processed_seed_data.json`. Primary demo scenarios use real account IDs such as `C8126703807`, `C2972777054`, and `C2006456468`; the UI and main tests no longer rely on synthetic `ACC_*` cases.
+The main runtime target is `DEMO_MODE=false`: Redis Cloud, Neo4j AuraDB, MongoDB Atlas, ChromaDB Cloud, and Gemini are used when their credentials are present. `DEMO_MODE=true` is kept only for offline fallback and automated tests.
 
 ## What It Does
 
-- Phase 1: deterministic rule screening with dataset-scale thresholds, whitelist/blacklist, velocity, risk score, shared infrastructure, and balance-drain signals.
-- Phase 2: planner/executor/vision/report agents collect and summarize evidence when a transaction needs investigation.
-- Phase 3: detective adjudication returns `allow`, `block`, or `escalate`, then updates fallback controls.
-- Offline mode: with `DEMO_MODE=true`, cloud services are skipped and local simulators are seeded from the real dataset.
-- UI: a banking simulator on the left and a fraud operations console on the right, streaming pipeline events live.
+- Phase 1 screens transactions with dataset-scale rules, Redis risk scores, whitelists, blacklists, velocity, shared infrastructure, and balance-drain signals.
+- Phase 2 runs Planner, Executor, Vision, and Report agents to collect evidence from MongoDB, Neo4j, ChromaDB, Redis, and the current transaction.
+- Phase 3 uses the Detective agent to return `allow`, `block`, or `escalate`, then writes audit/risk updates back through the pipeline.
+- The UI is a two-column banking and fraud operations console with live SSE pipeline events.
 
 ## Project Structure
 
 ```text
-configs/                     Runtime settings and environment parsing
+configs/                      Runtime settings and env parsing
 core/
-  agents/                    Planner, Executor, Vision, Report, Detective
-  orchestration/pipeline.py   LangGraph pipeline and Phase 1 rules
-  schemas/models.py           Pydantic models
+  agents/                     Planner, Executor, Vision, Report, Detective
+  orchestration/pipeline.py    LangGraph pipeline and Phase 1 rules
+  schemas/models.py            Pydantic models
 infrastructure/
-  databases/                  Redis/Neo4j/MongoDB/Chroma clients and simulators
-  llm/gemini.py               Gemini wrapper with deterministic fallback
+  databases/                   Redis, Neo4j, MongoDB, ChromaDB, simulators
+  llm/gemini.py                Gemini wrapper with quota-safe fallback
 services/
-  api/server.py               FastAPI app and CLI demo entry
-  ui/                         Next.js fraud operations console
+  api/server.py                FastAPI app and CLI entry
+  ui/                          Next.js fraud operations console
 evaluation/
   data/processed_seed_data.json
-  build_seed_data.py          Rebuild processed seed data from final.csv
-  evaluate_dataset.py         Dataset evaluation metrics
-tests/                        Backend/API/pipeline smoke and acceptance tests
-final.csv                     Source transaction dataset
-main.py                       `python main.py` or `python main.py --serve`
-render.yaml                   Render backend deployment blueprint
+  build_seed_data.py           Rebuild seed data from final.csv
+  push_seed_data.py            Push full dataset seed to real cloud DBs
+  evaluate_honest.py           Leakage-controlled benchmark
+tests/                         Backend/API/pipeline tests
+final.csv                      Source transaction dataset
+main.py                        `python main.py` or `python main.py --serve`
 ```
 
-## Quick Start
+## Local Setup
 
 ```powershell
 python -m venv .venv
@@ -44,10 +43,30 @@ python -m venv .venv
 pip install -r requirements.txt
 
 Copy-Item .env.example .env
+```
+
+Fill `.env` with your real Redis, Neo4j, MongoDB, ChromaDB, and Gemini credentials. For the main workflow:
+
+```text
+DEMO_MODE=false
+AUTO_SEED_ON_STARTUP=false
+BACKEND_URL=http://localhost:8000
+FRONTEND_URL=http://localhost:3000
+```
+
+Seed the cloud databases when the dataset or credentials change:
+
+```powershell
+python evaluation\push_seed_data.py
+```
+
+Start the API:
+
+```powershell
 python main.py --serve
 ```
 
-In another terminal:
+Start the UI in another terminal:
 
 ```powershell
 cd services\ui
@@ -61,29 +80,32 @@ Open:
 Frontend: http://localhost:3000
 Backend:  http://localhost:8000
 Docs:     http://localhost:8000/docs
+Health:   http://localhost:8000/health
 ```
 
-## Demo Scenarios
+`GET /health` should show `mode: real_services` and service statuses such as `redis: connected`, `neo4j: connected`, `mongodb: connected`, `chromadb: connected`, and `gemini: configured`. If a service says `simulator`, that credential or connection is failing and the runtime has fallen back for that component.
 
-The API exposes these dataset-backed scenarios at `GET /api/scenarios`:
+## Dataset Scenarios
+
+The demo scenarios use real IDs from `final.csv`, not synthetic `ACC_*` accounts.
 
 | Scenario | Transaction | Expected |
 | --- | --- | --- |
 | Clean small payment | `C8126703807 -> C1409103719`, amount `144.88` | `allow` |
 | Fraud cluster transfer | `C2972777054 -> C8992641070`, amount `27000` | `block` |
 | Second fraud cluster | `C2006456468 -> C3259274595`, amount `22000` | `block` |
-| High-value legitimate transfer | selected from the largest non-fraud dataset row | `allow` |
+| High-value legitimate transfer | largest non-fraud dataset sample | `allow` |
 
-## API
+API:
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| `GET` | `/health` | Runtime health and dataset summary |
+| `GET` | `/health` | Runtime mode, real-service status, dataset summary |
 | `GET` | `/api/scenarios` | Dataset-backed demo scenarios |
-| `POST` | `/api/login` | Demo login by real account ID |
-| `POST` | `/api/fraud-detection` | SSE streaming fraud pipeline for the UI |
+| `POST` | `/api/login` | Login by real dataset account ID |
+| `POST` | `/api/fraud-detection` | SSE streaming pipeline for the UI |
 | `POST` | `/transaction` | JSON transaction processing |
-| `POST` | `/demo/{n}` | Run a scenario by number |
+| `POST` | `/demo/{n}` | Run a dataset scenario by number |
 
 ## Verification
 
@@ -97,106 +119,52 @@ npm.cmd run build
 npm.cmd run lint
 ```
 
-Current backend test coverage includes:
-
-- import/startup safety for `main` and FastAPI app creation
-- dataset summary and real demo scenario IDs
-- `/health`, `/api/scenarios`, `/api/login`, bad amount handling, and SSE completion
-- acceptance decisions for the main clean/fraud/high-value scenarios
-- regression coverage for low-risk balance-drain history false positives
-
-This is strong enough for an MVP/demo. It is not yet a bank-grade test suite: add browser E2E, load tests, auth/security tests, and cloud-service integration tests before treating it as production software.
+Backend tests force `DEMO_MODE=true` in `tests/conftest.py` so they are deterministic and do not spend cloud quota. Use `/health`, `push_seed_data.py`, and a small manual transaction run to verify the real cloud path.
 
 ## Benchmark
 
-Run the full dataset benchmark:
+Do not use the old full-dataset benchmark as a performance claim. It seeds profiles, graph edges, and fraud ratios from the same rows being evaluated, so it is useful only as a smoke test.
+
+Use the leakage-controlled temporal holdout benchmark:
 
 ```powershell
-python evaluation\evaluate_dataset.py --limit 0
+python evaluation\evaluate_honest.py --train-frac 0.7 --limit 0
 ```
 
-Latest local full-dataset result on `final.csv`:
+Latest local honest result on `final.csv`:
 
 | Model | Rows | TP | TN | FP | FN | Precision | Recall | F1 | Accuracy |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Final pipeline | 701 | 202 | 498 | 1 | 0 | 0.9951 | 1.0000 | 0.9975 | 0.9986 |
-| Rule-only baseline | 701 | 202 | 498 | 1 | 0 | 0.9951 | 1.0000 | 0.9975 | 0.9986 |
+| Final pipeline | 211 | 59 | 151 | 1 | 0 | 0.9833 | 1.0000 | 0.9916 | 0.9953 |
+| Rule-only baseline | 211 | 30 | 151 | 1 | 29 | 0.9677 | 0.5085 | 0.6667 | 0.8578 |
 
-Interpretation: fraud recall is saturated on this dataset, so the pipeline matches the rule-only recall rather than exceeding it. The extra value of the pipeline is explainability, evidence capture, SSE visibility, and final adjudication. The output is written to `evaluation/results/dataset_metrics.json`, which is ignored by git.
+Hard cases where Phase 1 returns `yellow`:
 
-## Online Hosting
+| Model | Rows | TP | TN | FP | FN | Precision | Recall | F1 | Accuracy |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Final pipeline | 177 | 29 | 148 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 | 1.0000 |
+| Rule-only baseline | 177 | 0 | 148 | 0 | 29 | 0.0000 | 0.0000 | 0.0000 | 0.8362 |
 
-Recommended split for the current monorepo:
+For a real-DB benchmark without spending Gemini quota:
 
-- Backend: deploy the repo root to Render or Railway.
-- Frontend: deploy `services/ui` to Vercel.
-- Keep the folder structure as-is. The old `frontend/` and `backend/` names are not required; modern hosts let you set a root directory per service.
-
-### Backend On Render
-
-This repo includes `render.yaml`, so Render can create the API service from the root.
-
-Manual settings if you do not use the blueprint:
-
-```text
-Root directory: .
-Build command: pip install -r requirements.txt
-Start command: python -m uvicorn services.api.server:app --host 0.0.0.0 --port $PORT
-Health check: /health
+```powershell
+python evaluation\evaluate_honest.py --use-cloud-db --push-cloud-train --max-yellow-pipeline -1
 ```
 
-Minimum environment variables:
+For a Gemini-backed sample, cap yellow cases:
 
-```text
-PYTHON_VERSION=3.12.8
-DEMO_MODE=true
-API_HOST=0.0.0.0
-FRONTEND_URL=https://your-vercel-app.vercel.app
+```powershell
+python evaluation\evaluate_honest.py --use-cloud-db --use-gemini --max-yellow-pipeline 10
 ```
 
-Render injects `PORT`; the app reads it automatically. Keep `DEMO_MODE=true` for a reliable online demo without Redis/Neo4j/MongoDB/Chroma/Gemini credentials. Set `DEMO_MODE=false` only after adding the cloud credentials from `.env.example`.
+`--push-cloud-train` reseeds Redis, Neo4j, and MongoDB with the train split only. Use `python evaluation\push_seed_data.py` afterward if you want the full local demo dataset back in the cloud DBs.
 
-### Frontend On Vercel
+## Real-Service Notes
 
-Create a Vercel project from the same Git repo and set:
-
-```text
-Root directory: services/ui
-Install command: npm ci
-Build command: npm run build
-Output directory: .next
-```
-
-Environment variable:
-
-```text
-BACKEND_URL=https://your-render-api.onrender.com
-```
-
-The UI calls local `/api/*` routes; Next.js rewrites them to `BACKEND_URL`. That keeps browser calls same-origin and reduces CORS issues. After Vercel gives you the final URL, put that URL in Render's `FRONTEND_URL`.
-
-### Railway Alternative
-
-Create two services from the same repo:
-
-- API service: root `.`, start command `python -m uvicorn services.api.server:app --host 0.0.0.0 --port $PORT`
-- UI service: root `services/ui`, build `npm run build`, start `npm run start`
-
-Railway and Vercel both support monorepo root-directory settings:
-
-- Vercel monorepos: https://vercel.com/docs/monorepos
-- Render web services and port binding: https://render.com/docs/web-services
-- Render Python versions: https://render.com/docs/python-version
-- Railway monorepos: https://docs.railway.com/deployments/monorepo
-
-## Environment
-
-Use `.env.example` as the template. The default `DEMO_MODE=true` is recommended for local demo, online demo, and testing because it skips network/cloud initialization and seeds simulators from local dataset files.
-
-Set `DEMO_MODE=false` only when cloud credentials are ready for Redis, Neo4j, MongoDB, ChromaDB, and Gemini. Missing or failing cloud services fall back to local simulators where possible.
-
-## Notes
-
+- `AUTO_SEED_ON_STARTUP=false` is recommended for daily local work. It prevents the API server from wiping/reseeding cloud DBs every time it starts.
+- `python evaluation\push_seed_data.py` is the full-dataset seed path for the local UI demo.
+- `DEMO_MODE=false` still has graceful fallback per service. If one cloud service fails, the API can continue, but `/health` will reveal which component fell back.
+- Fallback caches are hydrated from the real dataset at startup, so a temporary cloud failure still uses `C...` dataset IDs instead of old `ACC_*` demo data.
+- MongoDB Atlas `SSL handshake failed` / `TLSV1_ALERT_INTERNAL_ERROR` usually means the current public IP is not allowed in Atlas Network Access. Add your machine's IP to Atlas, then restart `python main.py --serve`.
+- Gemini calls are serialized and retried to reduce free-tier quota pressure. Benchmarks should use `--max-yellow-pipeline` when `--use-gemini` is enabled.
 - Python 3.11 or 3.12 is recommended. Python 3.14 currently emits compatibility warnings from LangChain/Pydantic v1.
-- The current Gemini package `google-generativeai` emits a deprecation warning; migrating to `google.genai` is the next cleanup task.
-- `services/ui/package.json` uses `npm run lint` as a strict TypeScript check so the project works with Next 16 without the removed legacy Next lint command.

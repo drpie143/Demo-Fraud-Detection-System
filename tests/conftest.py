@@ -10,6 +10,7 @@ if str(ROOT) not in sys.path:
 
 def pytest_configure():
     os.environ["DEMO_MODE"] = "true"
+    os.environ["AUTO_SEED_ON_STARTUP"] = "true"
     os.environ["REDIS_HOST"] = "localhost"
     for key in [
         "GEMINI_API_KEY",

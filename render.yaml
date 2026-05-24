@@ -3,15 +3,78 @@ services:
     name: fraud-detection-api
     env: python
     plan: free
+    autoDeploy: true
     buildCommand: pip install -r requirements.txt
     startCommand: python -m uvicorn services.api.server:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
-        value: 3.12.8
+        value: "3.12.8"
       - key: DEMO_MODE
-        value: true
+        value: "false"
+      - key: AUTO_SEED_ON_STARTUP
+        value: "false"
       - key: API_HOST
-        value: 0.0.0.0
+        value: "0.0.0.0"
       - key: FRONTEND_URL
         sync: false
+      - key: FRONTEND_URLS
+        sync: false
+      - key: REDIS_HOST
+        sync: false
+      - key: REDIS_PORT
+        sync: false
+      - key: REDIS_USERNAME
+        sync: false
+      - key: REDIS_PASSWORD
+        sync: false
+      - key: NEO4J_URI
+        sync: false
+      - key: NEO4J_USER
+        sync: false
+      - key: NEO4J_PASSWORD
+        sync: false
+      - key: NEO4J_ALLOW_SELF_SIGNED_FALLBACK
+        value: "true"
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB_NAME
+        value: "fraud_detection"
+      - key: CHROMA_HOST
+        value: "api.trychroma.com"
+      - key: CHROMA_API_KEY
+        sync: false
+      - key: CHROMA_TENANT
+        sync: false
+      - key: CHROMA_DATABASE
+        sync: false
+      - key: CHROMA_COLLECTION_NAME
+        value: "fraud_knowledge_base"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL_ID
+        value: "gemini-2.5-flash"
+      - key: GEMINI_API_KEY_PLANNER
+        sync: false
+      - key: GEMINI_API_KEY_EXECUTOR
+        sync: false
+      - key: GEMINI_API_KEY_EXECUTOR_POOL
+        sync: false
+      - key: GEMINI_API_KEY_DETECTIVE
+        sync: false
+      - key: GEMINI_API_KEY_VISION
+        sync: false
+      - key: GEMINI_API_KEY_REPORT
+        sync: false
+      - key: INSTANT_ALLOW_MAX
+        value: "5000"
+      - key: ELEVATED_AMOUNT_THRESHOLD
+        value: "5000"
+      - key: LARGE_AMOUNT_THRESHOLD
+        value: "1000000"
+      - key: SUSPICIOUS_VELOCITY_THRESHOLD
+        value: "5"
+      - key: HIGH_RISK_THRESHOLD
+        value: "0.6"
+      - key: RED_RISK_THRESHOLD
+        value: "0.9"

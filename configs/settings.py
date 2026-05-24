@@ -24,8 +24,8 @@ load_dotenv()
 class Settings(BaseModel):
     """Global configuration for the fraud detection runtime."""
 
-    # Local development should usually keep DEMO_MODE=true so imports, tests,
-    # and demos work without cloud credentials.
+    # DEMO_MODE=false is the real-service path. Tests explicitly override this
+    # to true so they stay offline and deterministic.
     demo_mode: bool = False
 
     # Gemini
@@ -42,6 +42,7 @@ class Settings(BaseModel):
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = ""
+    neo4j_allow_self_signed_fallback: bool = True
 
     # ChromaDB
     chroma_host: str = "api.trychroma.com"
@@ -71,6 +72,7 @@ class Settings(BaseModel):
     api_port: int = 8000
 
     # Agent configuration
+    auto_seed_on_startup: bool = False
     max_investigation_steps: int = 10
     investigation_timeout: int = 30
     confidence_threshold: float = 0.85
@@ -100,6 +102,9 @@ def get_settings() -> Settings:
         neo4j_uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
         neo4j_user=os.getenv("NEO4J_USER", "neo4j"),
         neo4j_password=os.getenv("NEO4J_PASSWORD", ""),
+        neo4j_allow_self_signed_fallback=os.getenv(
+            "NEO4J_ALLOW_SELF_SIGNED_FALLBACK", "true"
+        ).lower() == "true",
         chroma_host=os.getenv("CHROMA_HOST", "api.trychroma.com"),
         chroma_api_key=os.getenv("CHROMA_API_KEY", ""),
         chroma_tenant=os.getenv("CHROMA_TENANT", ""),
@@ -116,6 +121,7 @@ def get_settings() -> Settings:
         dynamodb_table_profiles=os.getenv("DYNAMODB_TABLE_PROFILES", "customer_profiles"),
         api_host=os.getenv("API_HOST", "0.0.0.0"),
         api_port=int(os.getenv("PORT") or os.getenv("API_PORT", "8000")),
+        auto_seed_on_startup=os.getenv("AUTO_SEED_ON_STARTUP", "false").lower() == "true",
         max_investigation_steps=int(os.getenv("MAX_INVESTIGATION_STEPS", "10")),
         investigation_timeout=int(os.getenv("INVESTIGATION_TIMEOUT", "30")),
         confidence_threshold=float(os.getenv("CONFIDENCE_THRESHOLD", "0.85")),

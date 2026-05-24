@@ -6,6 +6,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from collections import defaultdict
 
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 # Add project root to path
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
@@ -92,7 +99,7 @@ def push_redis(profiles: list[dict], raw_edges: list[dict]):
         sender_counts[sender] += 1
         
     wl_count = 0
-    for p in low_risk[:30]:  # Top 30 low-risk accounts
+    for p in low_risk:
         acc_id = p["customer_id"]
         receivers = sorted(recv_map[acc_id].items(), key=lambda x: x[1], reverse=True)[:3]
         if receivers:
@@ -117,14 +124,14 @@ def push_redis(profiles: list[dict], raw_edges: list[dict]):
     print(f"  ✅ {len(blacklisted)} blacklisted accounts (batched)")
 
     # ─── Risk Scores ───
-    risk_map = {"low": 0.1, "medium": 0.45, "high": 0.75, "critical": 0.95}
+    risk_map = {"low": 0.08, "medium": 0.45, "high": 0.75, "critical": 0.95}
     now_iso = datetime.now().isoformat()
     for p in profiles:
+        fraud_ratio = float(p.get("fraud_ratio") or 0)
         base = risk_map.get(p["risk_category"], 0.3)
-        jitter = random.uniform(-0.05, 0.05)
-        score = max(0.0, min(1.0, base + jitter))
+        score = max(base, min(0.98, 0.2 + fraud_ratio * 0.78))
         pipe.hset(f"risk_score:{p['customer_id']}", mapping={
-            "score": str(round(score, 2)),
+            "score": str(round(score, 3)),
             "updated_at": now_iso,
         })
     print(f"  ✅ Risk scores for {len(profiles)} accounts (batched)")
@@ -182,12 +189,17 @@ def push_neo4j(profiles: list[dict], raw_edges: list[dict]):
         return False
 
     try:
-        from neo4j import GraphDatabase
-        driver = GraphDatabase.driver(
-            settings.neo4j_uri,
-            auth=(settings.neo4j_user, settings.neo4j_password),
+        from infrastructure.databases.neo4j_connection import open_neo4j_driver
+
+        connection = open_neo4j_driver(
+            uri=settings.neo4j_uri,
+            user=settings.neo4j_user,
+            password=settings.neo4j_password,
+            allow_self_signed_fallback=settings.neo4j_allow_self_signed_fallback,
         )
-        driver.verify_connectivity()
+        driver = connection.driver
+        if connection.used_tls_fallback:
+            print("  WARNING: Used Neo4j +ssc TLS fallback because +s certificate verification failed")
         print(f"  ✅ Connected: {settings.neo4j_uri}")
     except Exception as e:
         print(f"  ❌ Neo4j connection failed: {e}")
