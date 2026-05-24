@@ -20,6 +20,7 @@ node_modules/
 # IDE
 .vscode/
 .idea/
+.vercel/
 
 # Misc
 extract_diagram.py
