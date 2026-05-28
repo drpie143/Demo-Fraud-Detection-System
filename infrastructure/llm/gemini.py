@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 import json
+import os
 import time
 import random
 import threading
@@ -55,6 +56,13 @@ class GeminiProvider:
             with GeminiProvider._config_lock:
                 genai.configure(api_key=self.api_key)
                 self.model = genai.GenerativeModel(settings.gemini_model_id)
+
+    def _strict_mode(self) -> bool:
+        return os.getenv("GEMINI_STRICT_ERRORS", "false").lower() == "true"
+
+    def _raise_if_strict(self, message: str) -> None:
+        if self._strict_mode():
+            raise RuntimeError(message)
     
     def _safe_call(self, fn, fallback_value, max_retries: int = 3):
         """
@@ -77,6 +85,8 @@ class GeminiProvider:
                     "429", "quota", "rate", "resource_exhausted",
                     "too many", "overloaded", "503", "unavailable",
                 ])
+                if self._strict_mode():
+                    raise RuntimeError(f"Gemini API error after {attempt + 1} attempts: {e}") from e
                 if retryable and attempt < max_retries:
                     delay = (2 ** attempt) * 2 + random.uniform(0, 1)
                     print(f"   ⏳ Rate limit, retry in {delay:.1f}s "
@@ -95,6 +105,7 @@ class GeminiProvider:
     ) -> str:
         """Generate text từ Gemini (thread-safe + retry)."""
         if not self.model:
+            self._raise_if_strict("Gemini strict mode requires a configured Gemini API key.")
             return self._fallback_response(prompt)
         
         def _call():
@@ -141,10 +152,12 @@ class GeminiProvider:
         5. Fallback dict
         """
         if not self.model:
+            self._raise_if_strict("Gemini strict mode requires a configured Gemini API key.")
             raw = self._fallback_response(f"{system_prompt}\n\n{user_message}")
             try:
                 return json.loads(raw)
             except (json.JSONDecodeError, TypeError):
+                self._raise_if_strict("Gemini strict mode could not parse a JSON response from Gemini.")
                 return self._fallback_json(system_prompt)
         
         prompt = f"{system_prompt}\n\n{user_message}"
@@ -202,6 +215,7 @@ class GeminiProvider:
                 return extracted
         
         print("   ⚠️  Không parse được JSON từ Gemini response")
+        self._raise_if_strict("Gemini strict mode could not parse a JSON response from Gemini.")
         return self._fallback_json(system_prompt)
     
     def _extract_json_object(self, text: str) -> Optional[dict]:
@@ -238,6 +252,7 @@ class GeminiProvider:
     ) -> str:
         """Phân tích hình ảnh bằng Gemini Vision (thread-safe)."""
         if not self.model:
+            self._raise_if_strict("Gemini strict mode requires a configured Gemini API key.")
             return "Vision analysis không khả dụng (thiếu Gemini API key)"
         
         def _call():

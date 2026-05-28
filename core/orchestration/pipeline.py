@@ -960,7 +960,7 @@ class FraudDetectionOrchestrator:
         # ─── Store audit trail to Redis (ref: fraud-detection/phase1.py._finalize) ───
         redis_service.store_transaction_result(transaction.transaction_id, {
             "decision": decision,
-            "confidence": str(final_state.get("decision", {}).get("confidence", 0)),
+            "confidence": str((final_state.get("decision") or {}).get("confidence", 0)),
             "sender": transaction.sender_id,
             "receiver": transaction.receiver_id,
             "amount": str(transaction.amount),

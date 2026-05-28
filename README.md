@@ -1,15 +1,35 @@
 # Fraud Detection Console
 
-Local-first fraud detection console using real dataset accounts, a FastAPI API, a Next.js operations UI, cloud databases, and Gemini-backed investigation agents.
+A local-first fraud operations console using real dataset accounts, FastAPI, Next.js, cloud databases, and Gemini-backed investigation agents.
 
-The main runtime target is `DEMO_MODE=false`: Redis Cloud, Neo4j AuraDB, MongoDB Atlas, ChromaDB Cloud, and Gemini are used when their credentials are present. `DEMO_MODE=true` is kept only for offline fallback and automated tests.
+## Live Demo
+
+| Surface | URL |
+| --- | --- |
+| Web console | https://fraud-detection-console.vercel.app |
+| Backend API | https://fraud-detection-api-nijg.onrender.com |
+| Health check | https://fraud-detection-api-nijg.onrender.com/health |
+
+Hosted services may take a moment to wake up on free tiers.
+
+## Runtime Model
+
+The main workflow is `DEMO_MODE=false`:
+
+- Redis Cloud powers Phase 1 risk scores, velocity, whitelist, and blacklist checks.
+- Neo4j AuraDB stores account, device, IP, and transfer graph evidence.
+- MongoDB Atlas stores customer profiles and transaction history.
+- ChromaDB Cloud stores fraud knowledge and prior investigation patterns.
+- Gemini drives Planner, Executor, Vision, Report, and Detective agents.
+
+`DEMO_MODE=true` remains only for deterministic tests and offline fallback behavior.
 
 ## What It Does
 
-- Phase 1 screens transactions with dataset-scale rules, Redis risk scores, whitelists, blacklists, velocity, shared infrastructure, and balance-drain signals.
-- Phase 2 runs Planner, Executor, Vision, and Report agents to collect evidence from MongoDB, Neo4j, ChromaDB, Redis, and the current transaction.
-- Phase 3 uses the Detective agent to return `allow`, `block`, or `escalate`, then writes audit/risk updates back through the pipeline.
-- The UI is a two-column banking and fraud operations console with live SSE pipeline events.
+- Phase 1 screens transactions with dataset-scale rules, Redis signals, shared infrastructure, and balance-drain checks.
+- Phase 2 investigates yellow cases through agent-planned DB queries and evidence analysis.
+- Phase 3 returns `allow`, `block`, or `escalate`, then writes audit/risk updates.
+- The UI presents a two-column banking simulator and fraud operations console with live SSE pipeline events.
 
 ## Project Structure
 
@@ -21,15 +41,17 @@ core/
   schemas/models.py            Pydantic models
 infrastructure/
   databases/                   Redis, Neo4j, MongoDB, ChromaDB, simulators
-  llm/gemini.py                Gemini wrapper with quota-safe fallback
+  llm/gemini.py                Gemini wrapper with strict benchmark mode
 services/
   api/server.py                FastAPI app and CLI entry
   ui/                          Next.js fraud operations console
 evaluation/
   data/processed_seed_data.json
-  build_seed_data.py           Rebuild seed data from final.csv
+  benchmark_seed.py            Build train-split seed data for real benchmark
+  build_seed_data.py           Rebuild processed seed data from final.csv
   push_seed_data.py            Push full dataset seed to real cloud DBs
-  evaluate_honest.py           Leakage-controlled benchmark
+  evaluate_real_resume.py      Resume-safe real DB + Gemini benchmark
+  summarize_real_benchmark.py  Validate/summarize real benchmark checkpoint
 tests/                         Backend/API/pipeline tests
 final.csv                      Source transaction dataset
 main.py                        `python main.py` or `python main.py --serve`
@@ -37,10 +59,12 @@ main.py                        `python main.py` or `python main.py --serve`
 
 ## Local Setup
 
+Python 3.12 is recommended.
+
 ```powershell
-python -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 
 Copy-Item .env.example .env
 ```
@@ -74,7 +98,7 @@ npm install
 npm run dev
 ```
 
-Open:
+Open locally:
 
 ```text
 Frontend: http://localhost:3000
@@ -83,7 +107,7 @@ Docs:     http://localhost:8000/docs
 Health:   http://localhost:8000/health
 ```
 
-`GET /health` should show `mode: real_services` and service statuses such as `redis: connected`, `neo4j: connected`, `mongodb: connected`, `chromadb: connected`, and `gemini: configured`. If a service says `simulator`, that credential or connection is failing and the runtime has fallen back for that component.
+`GET /health` should show `mode: real_services` and all core services as connected/configured. If a service says `simulator`, that credential or connection is failing and the runtime has fallen back for that component.
 
 ## Dataset Scenarios
 
@@ -96,11 +120,11 @@ The demo scenarios use real IDs from `final.csv`, not synthetic `ACC_*` accounts
 | Second fraud cluster | `C2006456468 -> C3259274595`, amount `22000` | `block` |
 | High-value legitimate transfer | largest non-fraud dataset sample | `allow` |
 
-API:
+## API Surface
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| `GET` | `/health` | Runtime mode, real-service status, dataset summary |
+| `GET` | `/health` | Runtime mode, service status, dataset summary |
 | `GET` | `/api/scenarios` | Dataset-backed demo scenarios |
 | `POST` | `/api/login` | Login by real dataset account ID |
 | `POST` | `/api/fraud-detection` | SSE streaming pipeline for the UI |
@@ -114,50 +138,55 @@ python -m compileall -q main.py configs core infrastructure services\api evaluat
 pytest -q
 
 cd services\ui
-npx.cmd tsc --noEmit
-npm.cmd run build
 npm.cmd run lint
+npm.cmd run build
 ```
 
-Backend tests force `DEMO_MODE=true` in `tests/conftest.py` so they are deterministic and do not spend cloud quota. Use `/health`, `push_seed_data.py`, and a small manual transaction run to verify the real cloud path.
+Backend tests force `DEMO_MODE=true` in `tests/conftest.py` so they are deterministic and do not spend cloud quota. Use `/health` and a small manual transaction run to verify the real cloud path.
 
 ## Benchmark
 
-Do not use the old full-dataset benchmark as a performance claim. It seeds profiles, graph edges, and fraud ratios from the same rows being evaluated, so it is useful only as a smoke test.
+The benchmark that matters is the temporal holdout: the first 70% of `final.csv` is used as historical memory, and the last 30% is evaluated as future transactions.
 
-Use the leakage-controlled temporal holdout benchmark:
+### Real DB + Gemini Result
 
-```powershell
-python evaluation\evaluate_honest.py --train-frac 0.7 --limit 0
-```
+Latest completed real-service checkpoint: `evaluation/results/real_llm_resume.json`.
 
-Latest local honest result on `final.csv`:
+- Rows: `211/211` completed
+- Cloud services: Redis, Neo4j, MongoDB, and ChromaDB connected
+- LLM: Gemini enabled with strict error mode, so missing keys/quota/API errors stop instead of falling back silently
+- Seed policy: Redis, Neo4j, and MongoDB were reset to the train split only; ChromaDB knowledge collection was reused
 
 | Model | Rows | TP | TN | FP | FN | Precision | Recall | F1 | Accuracy |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Final pipeline | 211 | 59 | 151 | 1 | 0 | 0.9833 | 1.0000 | 0.9916 | 0.9953 |
+| Real Gemini pipeline | 211 | 53 | 144 | 8 | 6 | 0.8689 | 0.8983 | 0.8833 | 0.9336 |
 | Rule-only baseline | 211 | 30 | 151 | 1 | 29 | 0.9677 | 0.5085 | 0.6667 | 0.8578 |
 
-Hard cases where Phase 1 returns `yellow`:
+Yellow hard cases where Phase 1 returns `yellow`:
 
 | Model | Rows | TP | TN | FP | FN | Precision | Recall | F1 | Accuracy |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Final pipeline | 177 | 29 | 148 | 0 | 0 | 1.0000 | 1.0000 | 1.0000 | 1.0000 |
-| Rule-only baseline | 177 | 0 | 148 | 0 | 29 | 0.0000 | 0.0000 | 0.0000 | 0.8362 |
+| Real Gemini pipeline | 179 | 23 | 143 | 7 | 6 | 0.7667 | 0.7931 | 0.7797 | 0.9274 |
+| Rule-only baseline | 179 | 0 | 150 | 0 | 29 | 0.0000 | 0.0000 | 0.0000 | 0.8380 |
 
-For a real-DB benchmark without spending Gemini quota:
-
-```powershell
-python evaluation\evaluate_honest.py --use-cloud-db --push-cloud-train --max-yellow-pipeline -1
-```
-
-For a Gemini-backed sample, cap yellow cases:
+Summarize or validate the checkpoint without calling cloud APIs:
 
 ```powershell
-python evaluation\evaluate_honest.py --use-cloud-db --use-gemini --max-yellow-pipeline 10
+python evaluation\summarize_real_benchmark.py
+python evaluation\summarize_real_benchmark.py --json
 ```
 
-`--push-cloud-train` reseeds Redis, Neo4j, and MongoDB with the train split only. Use `python evaluation\push_seed_data.py` afterward if you want the full local demo dataset back in the cloud DBs.
+Run or resume the real benchmark:
+
+```powershell
+# First run only: reset cloud DBs to the train split and start a fresh checkpoint.
+python evaluation\evaluate_real_resume.py --push-cloud-train --reset-progress --max-new-yellow 5
+
+# Later runs: resume from the checkpoint. Do not reseed cloud DBs.
+python evaluation\evaluate_real_resume.py --max-new-yellow 5
+```
+
+`evaluate_real_resume.py` writes `evaluation/results/real_llm_resume.json` after every successful transaction. Metrics are emitted only when `completed_rows == holdout_rows`.
 
 ## Real-Service Notes
 
@@ -165,6 +194,6 @@ python evaluation\evaluate_honest.py --use-cloud-db --use-gemini --max-yellow-pi
 - `python evaluation\push_seed_data.py` is the full-dataset seed path for the local UI demo.
 - `DEMO_MODE=false` still has graceful fallback per service. If one cloud service fails, the API can continue, but `/health` will reveal which component fell back.
 - Fallback caches are hydrated from the real dataset at startup, so a temporary cloud failure still uses `C...` dataset IDs instead of old `ACC_*` demo data.
-- MongoDB Atlas `SSL handshake failed` / `TLSV1_ALERT_INTERNAL_ERROR` usually means the current public IP is not allowed in Atlas Network Access. Add your machine's IP to Atlas, then restart `python main.py --serve`.
-- Gemini calls are serialized and retried to reduce free-tier quota pressure. Benchmarks should use `--max-yellow-pipeline` when `--use-gemini` is enabled.
-- Python 3.11 or 3.12 is recommended. Python 3.14 currently emits compatibility warnings from LangChain/Pydantic v1.
+- MongoDB Atlas `SSL handshake failed` / `TLSV1_ALERT_INTERNAL_ERROR` usually means the current public IP is not allowed in Atlas Network Access.
+- Normal Gemini calls are serialized and retried to reduce free-tier quota pressure. The resumable real benchmark uses strict mode, so quota/API errors stop the current run and keep the last saved checkpoint.
+- The project currently uses the deprecated `google-generativeai` SDK. It still works, but migrating to `google.genai` is the next maintenance step.

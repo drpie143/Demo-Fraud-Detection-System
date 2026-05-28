@@ -5,16 +5,23 @@ __pycache__/
 *.pyc
 *.egg-info/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
 dist/
 build/
 
 # Env
 .env
 .env.local
+.env.*.local
 
 # Node
 node_modules/
 .next/
+out/
 *.tsbuildinfo
 
 # IDE
@@ -22,10 +29,16 @@ node_modules/
 .idea/
 .vercel/
 
+# Logs
+*.log
+logs/
+
+# Generated/runtime outputs
+frontend-design/
+evaluation/results/
+runtime/
+
 # Misc
 extract_diagram.py
 *.pdf
 *.png
-frontend-design/
-evaluation/results/
-runtime/
