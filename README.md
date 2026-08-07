@@ -306,28 +306,41 @@ best any decision layer can extract from it.
 | | Every mechanism labelled | `CASH_OUT` unlabelled |
 |---|---:|---:|
 | Gradient boosting | 0.9048 | 0.0000 |
-| Phase 1 rules (transaction-level) | 0.4857 | **0.5946** |
-| Investigation evidence, rule scorer | 0.4516 | 0.0000 |
-| Investigation evidence, fitted ceiling | 0.4628 | 0.0000 |
+| Phase 1 rules (transaction-level) | 0.4857 | 0.5946 |
+| Account-history evidence, rule scorer | 0.4516 | 0.0000 |
+| Account-history evidence, fitted ceiling | 0.4628 | **0.0000** |
+| **+ transaction-level signals** | **0.8421** | **0.5306** |
+| Transaction + typology only, no history | 0.8148 | 0.5098 |
 
-The last row is the uncomfortable one. **The five-database investigation layer
-contributes nothing on exactly the cases the supervised model cannot handle**,
-because all nine signals are account-history features and 61% of the zero-shot
-holdout senders have no history to look up. `RISKY_GRAPH_NEIGHBORS` fires on 1
-of 93 rows.
+The fourth row was the problem. All nine original signals are account
+aggregates, so on the zero-shot holdout — where 61% of senders had never been
+seen and `RISKY_GRAPH_NEIGHBORS` fired on 1 of 93 rows — the five databases
+returned nothing and the investigation had no material at all.
 
-That is worth knowing before spending quota: running the agent pipeline on those
-93 transactions would have measured a pipeline whose evidence layer is empty
-there. It also says what to change — evidence for a first-seen account has to
-come from the transaction itself and from pattern descriptions in the vector
-store, not from account history that does not exist.
+`core/evidence/transaction_signals.py` fixes that with evidence an account has
+on its first ever payment: where the amount sits in the population, whether the
+balance was fully drained, whether the destination was dormant and absorbed the
+whole transfer, whether the authentication was weaker than the amount justified,
+and whether the device and address are new to the bank rather than merely new to
+the account.
+
+`TypologyMatcher` adds the piece a vector store is meant to provide: prototypes
+of fraud shapes, carrying no account identity, fitted only on the mechanisms
+that *were* labelled. With `CASH_OUT` masked its prototypes come from `TRANSFER`
+fraud, and reaching 0.5098 on `CASH_OUT` is that generalisation working.
+
+The last row matters most — **0.8148 with no account history whatsoever**. An
+investigation can now work on an account the bank has never seen.
 
 ```powershell
 python evaluation\evaluate_evidence_only.py
 ```
 
-This bounds the agent; it does not stand in for it. Anything Gemini scores above
-the fitted line is reasoning the evidence did not already contain.
+These numbers bound the agent; they do not stand in for it. Anything Gemini
+scores above the fitted line is reasoning the evidence did not already contain,
+and that difference is the number worth publishing. Running it was not worth the
+quota while the evidence layer scored 0.0000 on the target cases; now that it
+reaches 0.5306, it is.
 
 ### Real DB + Gemini Result
 

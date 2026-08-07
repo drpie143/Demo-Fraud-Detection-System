@@ -38,6 +38,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from core.evidence.transaction_signals import (
+    SIGNAL_NAMES,
+    PopulationStats,
+    TypologyMatcher,
+    transaction_signals,
+)
 from evaluation.baseline_models import bootstrap_ci, metrics
 from evaluation.benchmark_seed import behavioural_risk_score
 
@@ -158,6 +164,37 @@ def main() -> None:
     train, holdout = df.iloc[:cut].copy(), df.iloc[cut:].copy()
     results: dict = {}
 
+    def enriched_evidence(tr: pd.DataFrame, te: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Account-history evidence plus signals that survive an unknown account."""
+        stats = PopulationStats.from_rows(tr.to_dict("records"))
+        tr_signals = [transaction_signals(r, stats) for r in tr.to_dict("records")]
+        te_signals = [transaction_signals(r, stats) for r in te.to_dict("records")]
+
+        matcher = TypologyMatcher().fit(tr_signals, [int(v) for v in tr[LABEL]])
+
+        def frame(base: pd.DataFrame, signals: list[dict[str, float]]) -> pd.DataFrame:
+            out = base.copy()
+            for name in SIGNAL_NAMES:
+                out[name] = [s[name] for s in signals]
+            out["TYPOLOGY_MATCH"] = [matcher.similarity(s) for s in signals]
+            return out
+
+        return (
+            frame(collect_evidence(tr, tr), tr_signals),
+            frame(collect_evidence(tr, te), te_signals),
+        )
+
+    def fit_and_report(
+        name: str, ev_tr: pd.DataFrame, ev_te: pd.DataFrame, y_tr: list[int], y_te: list[int]
+    ) -> dict | None:
+        if sum(y_tr) == 0:
+            return None
+        scaler = StandardScaler().fit(ev_tr)
+        model = LogisticRegression(max_iter=2000, class_weight="balanced", random_state=args.seed)
+        model.fit(scaler.transform(ev_tr), y_tr)
+        pred = [int(v) for v in model.predict(scaler.transform(ev_te))]
+        return report(name, y_te, pred, args.bootstrap, args.seed)
+
     def run_block(title: str, tr: pd.DataFrame, te: pd.DataFrame) -> dict:
         print(f"\n--- {title}  (n={len(te)}, fraud={int(te[LABEL].sum())}) ---")
         y_tr = [int(v) for v in tr[LABEL]]
@@ -165,17 +202,24 @@ def main() -> None:
         ev_tr, ev_te = collect_evidence(tr, tr), collect_evidence(tr, te)
 
         block = {"n": len(te), "fraud": sum(y_te)}
-        block["deterministic_scorer"] = report(
-            "evidence + deterministic scorer", y_te, deterministic_score(ev_te), args.bootstrap, args.seed
+        block["account_history_rule_scorer"] = report(
+            "account history, rule scorer", y_te, deterministic_score(ev_te), args.bootstrap, args.seed
         )
-        if sum(y_tr) > 0:
-            scaler = StandardScaler().fit(ev_tr)
-            model = LogisticRegression(max_iter=2000, class_weight="balanced", random_state=args.seed)
-            model.fit(scaler.transform(ev_tr), y_tr)
-            pred = [int(v) for v in model.predict(scaler.transform(ev_te))]
-            block["fitted_ceiling"] = report(
-                "evidence + fitted linear layer (ceiling)", y_te, pred, args.bootstrap, args.seed
-            )
+        block["account_history_ceiling"] = fit_and_report(
+            "account history, fitted ceiling", ev_tr, ev_te, y_tr, y_te
+        )
+
+        rich_tr, rich_te = enriched_evidence(tr, te)
+        block["with_transaction_signals"] = fit_and_report(
+            "+ transaction-level signals", rich_tr, rich_te, y_tr, y_te
+        )
+
+        # Typology matching on its own, with no account identity at all.
+        typ_tr = rich_tr[[*SIGNAL_NAMES, "TYPOLOGY_MATCH"]]
+        typ_te = rich_te[[*SIGNAL_NAMES, "TYPOLOGY_MATCH"]]
+        block["transaction_and_typology_only"] = fit_and_report(
+            "transaction + typology only (no history)", typ_tr, typ_te, y_tr, y_te
+        )
         return block
 
     results["all_labelled"] = run_block("every mechanism labelled", train, holdout)
