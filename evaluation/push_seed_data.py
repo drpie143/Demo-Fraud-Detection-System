@@ -110,7 +110,7 @@ def push_redis(profiles: list[dict], raw_edges: list[dict]):
 
     # ─── Blacklist: critical/high-risk accounts ───
     critical = [p for p in profiles if p["risk_category"] == "critical"]
-    high_fraud = [p for p in profiles if p.get("fraud_ratio", 0) >= 0.8]
+    high_fraud = [p for p in profiles if p.get("behaviour_risk_score", 0) >= 0.8]
     blacklisted = set()
     for p in (critical + high_fraud):
         acc_id = p["customer_id"]
@@ -127,7 +127,7 @@ def push_redis(profiles: list[dict], raw_edges: list[dict]):
     risk_map = {"low": 0.08, "medium": 0.45, "high": 0.75, "critical": 0.95}
     now_iso = datetime.now().isoformat()
     for p in profiles:
-        fraud_ratio = float(p.get("fraud_ratio") or 0)
+        fraud_ratio = float(p.get("behaviour_risk_score") or 0)
         base = risk_map.get(p["risk_category"], 0.3)
         score = max(base, min(0.98, 0.2 + fraud_ratio * 0.78))
         pipe.hset(f"risk_score:{p['customer_id']}", mapping={
@@ -410,7 +410,7 @@ def update_simulators(profiles: list[dict], transactions: list[dict], raw_edges:
 
     redis_sim._blacklist = set()
     for p in profiles:
-        if p["risk_category"] == "critical" or p.get("fraud_ratio", 0) >= 0.8:
+        if p["risk_category"] == "critical" or p.get("behaviour_risk_score", 0) >= 0.8:
             redis_sim._blacklist.add(p["customer_id"])
 
     risk_map = {"low": 0.1, "medium": 0.45, "high": 0.75, "critical": 0.95}

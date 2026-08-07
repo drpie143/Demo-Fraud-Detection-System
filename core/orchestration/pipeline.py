@@ -250,27 +250,48 @@ def phase1_screening(state: GraphState) -> GraphState:
         ))
         risk_score += 0.2
     
-    # ─── Rule 6: VPN / Tor ───
-    if txn.ip_address and any(
-        kw in txn.ip_address.lower()
-        for kw in ["vpn", "tor", "proxy", "185.220"]
-    ):
+    # ─── Rule 6: IP shared across many accounts ───
+    # Previously this matched IPs containing "vpn"/"tor"/"proxy". Dataset
+    # addresses are plain dotted quads, so the rule fired on zero of 1,043 rows.
+    # Shared network infrastructure is the signal that actually exists here:
+    # an address used by more than a handful of accounts is 2.9x base rate.
+    ip_accounts = redis_service.count_accounts_for_ip(txn.ip_address) if txn.ip_address else 0
+    if ip_accounts > settings.shared_ip_account_threshold:
         triggered_rules.append(RuleDetail(
-            rule="VPN_TOR_DETECTED",
+            rule="SHARED_IP_INFRASTRUCTURE",
             severity="high",
-            detail=f"IP {txn.ip_address} flagged as VPN/Tor/Proxy",
+            value=float(ip_accounts),
+            threshold=float(settings.shared_ip_account_threshold),
+            detail=f"IP {txn.ip_address} dùng chung bởi {ip_accounts} tài khoản",
         ))
         risk_score += 0.15
-    
-    # ─── Rule 7: New/Unknown device ───
-    if txn.device_id and txn.device_id.startswith("DEV_UNKNOWN"):
+
+    # ─── Rule 7: Device not previously seen for this account ───
+    # Previously this matched device ids starting with "DEV_UNKNOWN", a prefix
+    # from retired demo data that appears on zero rows of the real dataset.
+    if txn.device_id and not redis_service.is_known_device(txn.sender_id, txn.device_id):
         triggered_rules.append(RuleDetail(
             rule="UNKNOWN_DEVICE",
             severity="medium",
-            detail=f"Device {txn.device_id} không có trong profile",
+            detail=f"Device {txn.device_id} chưa từng thấy ở tài khoản này",
         ))
         risk_score += 0.1
-    
+
+    # ─── Rule 8: Device shared across many accounts ───
+    device_accounts = (
+        redis_service.count_accounts_for_device(txn.device_id) if txn.device_id else 0
+    )
+    if device_accounts > settings.shared_device_account_threshold:
+        triggered_rules.append(RuleDetail(
+            rule="SHARED_DEVICE_RING",
+            severity="high",
+            value=float(device_accounts),
+            threshold=float(settings.shared_device_account_threshold),
+            detail=f"Thiết bị {txn.device_id} dùng chung bởi {device_accounts} tài khoản",
+        ))
+        risk_score += 0.15
+
+
     # ─── Clamp risk score ───
     risk_score = min(risk_score, 1.0)
     

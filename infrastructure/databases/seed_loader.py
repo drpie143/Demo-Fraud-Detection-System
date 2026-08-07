@@ -246,7 +246,7 @@ def apply_processed_seed_to_simulators(
                 "type": "account",
                 "label": profile.get("name", account_id),
                 "risk": profile.get("risk_category", "unknown"),
-                "fraud_ratio": profile.get("fraud_ratio", 0),
+                "behaviour_risk_score": profile.get("behaviour_risk_score", 0),
             }
 
         transfer_map: dict[tuple[str, str], dict[str, float | int]] = defaultdict(
@@ -293,7 +293,7 @@ def apply_processed_seed_to_simulators(
         p["customer_id"]
         for p in profiles
         if p.get("customer_id")
-        and (p.get("risk_category") == "critical" or _safe_float(p.get("fraud_ratio")) >= 0.8)
+        and (p.get("risk_category") == "critical" or _safe_float(p.get("behaviour_risk_score")) >= 0.8)
     }
     risk_map = {"low": 0.08, "medium": 0.45, "high": 0.75, "critical": 0.95}
     risk_scores = {}
@@ -301,7 +301,7 @@ def apply_processed_seed_to_simulators(
         account_id = profile.get("customer_id")
         if not account_id:
             continue
-        fraud_ratio = _safe_float(profile.get("fraud_ratio"))
+        fraud_ratio = _safe_float(profile.get("behaviour_risk_score"))
         base = risk_map.get(profile.get("risk_category"), 0.3)
         risk_scores[account_id] = round(max(base, min(0.98, 0.2 + fraud_ratio * 0.78)), 3)
 

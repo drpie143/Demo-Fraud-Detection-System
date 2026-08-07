@@ -487,13 +487,13 @@ class ExecutorAgent:
             if tool == "mongodb_profile" and isinstance(data, dict):
                 account_id = data.get("customer_id", "unknown")
                 risk = data.get("risk_category", "unknown")
-                fraud_ratio = float(data.get("fraud_ratio") or 0)
+                fraud_ratio = float(data.get("behaviour_risk_score") or 0)
                 age = int(data.get("account_age_days") or 0)
-                notes.append(f"Profile {account_id}: risk={risk}, fraud_ratio={fraud_ratio:.2f}, age={age}d")
+                notes.append(f"Profile {account_id}: risk={risk}, behaviour_risk_score={fraud_ratio:.2f}, age={age}d")
                 if risk in {"critical", "high"}:
                     add(f"PROFILE_RISK: {account_id} risk_category={risk}")
                 if fraud_ratio >= 0.8:
-                    add(f"HISTORICAL_FRAUD_RATIO: {account_id} fraud_ratio={fraud_ratio:.2f}")
+                    add(f"HISTORICAL_BEHAVIOUR_RISK: {account_id} behaviour_risk_score={fraud_ratio:.2f}")
                 if 0 < age < 30 and risk != "low":
                     add(f"NEW_ACCOUNT: {account_id} age={age} days")
 

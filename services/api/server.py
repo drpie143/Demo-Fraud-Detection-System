@@ -238,7 +238,7 @@ def create_fastapi_app():
                 "name": profile.get("name", "Unknown"),
                 "kyc_status": profile.get("kyc_status", "verified" if profile.get("risk_category") == "low" else "review"),
                 "risk_category": profile.get("risk_category", "unknown"),
-                "fraud_ratio": profile.get("fraud_ratio", 0),
+                "behaviour_risk_score": profile.get("behaviour_risk_score", 0),
             },
             "accounts": [
                 {

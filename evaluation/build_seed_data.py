@@ -9,6 +9,8 @@ from collections import defaultdict
 
 import pandas as pd
 
+from evaluation.benchmark_seed import _risk_from_behaviour, behavioural_risk_score
+
 random.seed(42)
 
 # Add project root to path
@@ -54,18 +56,13 @@ def build_profiles(df: pd.DataFrame) -> list[dict]:
             continue
         seen.add(acc_id)
 
-        fraud_ratio = grp["isFraud"].mean()
+        # Behavioural, not label-derived. Deriving risk from the account's
+        # historical isFraud rate handed the investigation agents the answer for
+        # every account they had seen before.
+        behaviour_score = behavioural_risk_score(grp)
+        risk = _risk_from_behaviour(behaviour_score)
         avg_amount = grp["amount"].mean()
         txn_count = len(grp)
-
-        if fraud_ratio >= 0.7:
-            risk = "critical"
-        elif fraud_ratio >= 0.4:
-            risk = "high"
-        elif fraud_ratio >= 0.1:
-            risk = "medium"
-        else:
-            risk = "low"
 
         type_mode = grp["type"].mode().iloc[0] if len(grp) > 0 else "TRANSFER"
         account_type = {
@@ -103,7 +100,7 @@ def build_profiles(df: pd.DataFrame) -> list[dict]:
                 "lat": float(last_row["geolocation_lat"]) if pd.notna(last_row.get("geolocation_lat")) else None,
                 "long": float(last_row["geolocation_long"]) if pd.notna(last_row.get("geolocation_long")) else None,
             },
-            "fraud_ratio": round(fraud_ratio, 2),
+            "behaviour_risk_score": behaviour_score,
         })
 
     # Build receiver profiles
@@ -111,16 +108,14 @@ def build_profiles(df: pd.DataFrame) -> list[dict]:
         if acc_id in seen:
             continue
         seen.add(acc_id)
-        
-        recv_txns = df[df["receiver_account_no"] == acc_id]
-        fraud_recv_ratio = recv_txns["isFraud"].mean() if len(recv_txns) > 0 else 0
 
-        if fraud_recv_ratio >= 0.7:
-            risk = "high"
-        elif fraud_recv_ratio >= 0.3:
-            risk = "medium"
-        else:
-            risk = "low"
+        recv_txns = df[df["receiver_account_no"] == acc_id]
+        # Receivers have no sending behaviour, so risk comes from how much
+        # inbound value they concentrate: a mule collects from many senders.
+        inbound = len(recv_txns)
+        distinct_senders = int(recv_txns["sender_account_no"].nunique()) if inbound else 0
+        behaviour_score = round(min(0.95, 0.05 + 0.12 * distinct_senders + 0.04 * inbound), 3)
+        risk = _risk_from_behaviour(behaviour_score)
 
         profiles.append({
             "_id": acc_id,
@@ -136,7 +131,7 @@ def build_profiles(df: pd.DataFrame) -> list[dict]:
             "device_id": None,
             "ip_address": None,
             "geolocation": None,
-            "fraud_ratio": round(fraud_recv_ratio, 2),
+            "behaviour_risk_score": behaviour_score,
         })
 
     return profiles
