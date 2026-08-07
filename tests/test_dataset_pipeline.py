@@ -1,4 +1,20 @@
+import csv
+from pathlib import Path
+
 from fastapi.testclient import TestClient
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def csv_row_count() -> int:
+    """Read the count from the file rather than hardcoding it.
+
+    These assertions used to pin `csv_rows == 701`, which broke the moment the
+    dataset was regenerated. What they are actually checking is that the loader
+    sees the whole file.
+    """
+    with (ROOT / "final.csv").open(encoding="utf-8") as handle:
+        return sum(1 for _ in csv.DictReader(handle))
 
 
 def test_import_main():
@@ -11,8 +27,9 @@ def test_dataset_scenarios_are_real_ids():
     summary = dataset_summary()
     scenarios = build_demo_scenarios()
 
-    assert summary["csv_rows"] == 701
-    assert summary["fraud"] == 202
+    assert summary["csv_rows"] == csv_row_count()
+    # Every real PaySim fraud row must survive any regeneration.
+    assert summary["fraud"] >= 202
     assert len(scenarios) >= 4
     assert all(not s["transaction"].sender_id.startswith("ACC_") for s in scenarios)
     scenario_pairs = {
@@ -30,7 +47,7 @@ def test_api_health_login_and_scenarios():
     with TestClient(create_fastapi_app()) as client:
         health = client.get("/health")
         assert health.status_code == 200
-        assert health.json()["dataset"]["csv_rows"] == 701
+        assert health.json()["dataset"]["csv_rows"] == csv_row_count()
         scenarios = client.get("/api/scenarios")
         assert scenarios.status_code == 200
         assert len(scenarios.json()) >= 4

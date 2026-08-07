@@ -33,3 +33,6 @@ pandas>=2.2.0              # Dataset preparation/evaluation scripts
 # --- Testing ---
 pytest>=8.0.0
 httpx>=0.27.0              # FastAPI TestClient
+
+# Evaluation: leakage audit and tabular baselines
+scikit-learn
