@@ -110,3 +110,43 @@ def test_typology_matcher_ignores_a_single_class(stats):
 def test_population_stats_handle_an_empty_corpus():
     empty = PopulationStats.from_rows([])
     assert empty.amount_percentile(1_000.0) == 0.5
+
+
+# ------------------------------------------------------- pipeline integration
+
+
+def test_transaction_evidence_raises_one_finding_not_five():
+    """report.py blocks at `len(risk_factors) >= 3`, weighting every entry alike.
+
+    Emitting each observation as its own risk indicator therefore blocked any
+    transaction that merely looked unusual, including a legitimate balance
+    drain. Observations belong in the narrative; the typology judgement is the
+    finding.
+    """
+    from core.orchestration.pipeline import _transaction_evidence
+
+    drain = {
+        "amount": 187_474.02,
+        "sender_balance_before": 93_737.01,
+        "sender_balance_after": 0.0,
+        "oldbalanceDest": 0.0,
+        "newbalanceDest": 187_474.02,
+        "transaction_type": "TRANSFER",
+        "auth_method": "SMS_OTP",
+        "device_id": "unseen",
+        "ip_address": "198.51.100.7",
+    }
+    result = _transaction_evidence(drain)
+    assert result is not None
+    assert len(result.risk_indicators) <= 1, result.risk_indicators
+    # The observations are still available to the agents, just not as findings.
+    assert "chuyển" in result.analysis or "rút cạn" in result.analysis
+
+
+def test_transaction_evidence_survives_a_malformed_transaction():
+    """An investigation must never fail because evidence collection did."""
+    from core.orchestration.pipeline import _transaction_evidence
+
+    assert _transaction_evidence({}) is None
+    partial = _transaction_evidence({"amount": None, "auth_method": "SMS_OTP"})
+    assert partial is None or partial.success
