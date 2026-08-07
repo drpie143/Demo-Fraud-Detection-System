@@ -295,6 +295,40 @@ One caveat worth stating: 61.3% of the model's permutation importance sits on
 `oldbalanceDest`, which is PaySim's own structural signature for fraud. Its
 0.9048 is partly a measure of how synthetic the data is.
 
+### What the investigation evidence is worth, without an LLM
+
+The Phase 2 agents do two jobs: choose which stores to query, and reason over
+what comes back. Only the second needs Gemini. Collecting all nine evidence
+signals and scoring them directly runs in five seconds, costs no quota, and
+bounds the agent — a fitted linear layer over the same evidence is close to the
+best any decision layer can extract from it.
+
+| | Every mechanism labelled | `CASH_OUT` unlabelled |
+|---|---:|---:|
+| Gradient boosting | 0.9048 | 0.0000 |
+| Phase 1 rules (transaction-level) | 0.4857 | **0.5946** |
+| Investigation evidence, rule scorer | 0.4516 | 0.0000 |
+| Investigation evidence, fitted ceiling | 0.4628 | 0.0000 |
+
+The last row is the uncomfortable one. **The five-database investigation layer
+contributes nothing on exactly the cases the supervised model cannot handle**,
+because all nine signals are account-history features and 61% of the zero-shot
+holdout senders have no history to look up. `RISKY_GRAPH_NEIGHBORS` fires on 1
+of 93 rows.
+
+That is worth knowing before spending quota: running the agent pipeline on those
+93 transactions would have measured a pipeline whose evidence layer is empty
+there. It also says what to change — evidence for a first-seen account has to
+come from the transaction itself and from pattern descriptions in the vector
+store, not from account history that does not exist.
+
+```powershell
+python evaluation\evaluate_evidence_only.py
+```
+
+This bounds the agent; it does not stand in for it. Anything Gemini scores above
+the fitted line is reasoning the evidence did not already contain.
+
 ### Real DB + Gemini Result
 
 > **These numbers are from the superseded dataset and are not comparable to the
