@@ -254,6 +254,47 @@ first-seen column is the one that matters.
 python evaluation\baseline_models.py
 ```
 
+### The benchmark that decides whether an agent is worth it
+
+A supervised model is only as good as the attack types in its labels. Fraud
+labels arrive weeks after the fraud, and attackers change method faster than
+that. So the interesting question is not how a model scores a holdout containing
+the same mechanisms as its training data — it is what happens the first time
+something new arrives.
+
+| | Gradient boosting | Phase 1 rules |
+|---|---:|---:|
+| Every mechanism labelled | **0.9048** | 0.4857 |
+| `CASH_OUT` fraud never labelled | **0.0000** | **0.5946** |
+| `TRANSFER` fraud never labelled | **0.0000** | **0.4792** |
+
+Not degraded — zero. The model detects none of a mechanism it was never
+labelled on, whether that mechanism was labelled clean or simply absent from
+training. Rules keep working, because they never needed the label.
+
+Training on only the oldest 35% of the window still scores F1 0.9068, so the
+constraint is not data volume. It is label coverage of attack types.
+
+**This is what the investigation pipeline has to beat: the rules row, not the
+model row.** Both work without labels for the mechanism they are scoring, which
+makes it a fair comparison, and 0.48–0.59 is a real target rather than a
+formality.
+
+```powershell
+python evaluation\evaluate_novel_pattern.py
+python evaluation\analyze_agent_headroom.py
+```
+
+`analyze_agent_headroom.py` also rules out the other obvious architecture. The
+model is confident almost everywhere — only 3 of 313 holdout rows land between
+0.4 and 0.6 — so having an agent adjudicate the uncertain band is worth at most
+**+0.0229 F1**, and nothing at all on first-seen accounts. Routing by model
+uncertainty is not the design; routing by whether the mechanism is known is.
+
+One caveat worth stating: 61.3% of the model's permutation importance sits on
+`oldbalanceDest`, which is PaySim's own structural signature for fraud. Its
+0.9048 is partly a measure of how synthetic the data is.
+
 ### Real DB + Gemini Result
 
 > **These numbers are from the superseded dataset and are not comparable to the
