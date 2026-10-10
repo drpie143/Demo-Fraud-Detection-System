@@ -1,6 +1,6 @@
 # Fraud Detection Console
 
-A local-first fraud operations console using real dataset accounts, FastAPI, Next.js, cloud databases, and Gemini-backed investigation agents.
+A local-first fraud operations console using synthetic PaySim-derived accounts and transactions, FastAPI, Next.js, cloud databases, and Gemini-backed investigation agents.
 
 ## Live Demo
 
@@ -11,6 +11,15 @@ A local-first fraud operations console using real dataset accounts, FastAPI, Nex
 | Health check | https://fraud-detection-api-nijg.onrender.com/health |
 
 Hosted services may take a moment to wake up on free tiers.
+
+Checked on 10 October 2026: the web console loaded; the backend initially
+timed out, then responded after a retry. Redis, Neo4j and MongoDB reported
+simulator fallback while ChromaDB connected. The deployed health response
+still called this `real_services`; the updated code reports `degraded` /
+`hybrid_fallback`. The MongoDB connection reported a missing DNS SRV name.
+Restore the configured database connections and redeploy before presenting
+the hosted build as a fully connected cloud demo. An API key being configured
+does not verify Gemini access.
 
 ## Runtime Model
 
@@ -107,7 +116,16 @@ Docs:     http://localhost:8000/docs
 Health:   http://localhost:8000/health
 ```
 
-`GET /health` should show `mode: real_services` and all core services as connected/configured. If a service says `simulator`, that credential or connection is failing and the runtime has fallen back for that component.
+`GET /health` shows `mode: real_services` only when all four database adapters
+are connected. Partial connectivity reports `degraded` / `hybrid_fallback`;
+no cloud databases reports `degraded` / `simulator_fallback`. A deliberate
+offline demo reports `demo_simulator`. `gemini_check: configuration-only`
+indicates that health checks do not spend generation quota. The UI displays
+fallback status and supports retrying a slow backend connection.
+
+Gemini uses a separate `google-genai` client for each provider/API key.
+Connection failures and interrupted result streams require review/retry in
+the UI; they are not presented as confirmed fraud decisions.
 
 ## Dataset
 

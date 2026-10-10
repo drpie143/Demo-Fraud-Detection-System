@@ -2,8 +2,7 @@
 # LLM_PROVIDERS.PY - Kết nối LLM Cloud API (Gemini 2.5 Flash)
 # ====================================================================
 # THAY ĐỔI QUAN TRỌNG:
-#   1. Thread-safe: Lock toàn cục cho genai.configure() → tránh
-#      race condition khi nhiều agents cùng gọi API với keys khác nhau
+#   1. Mỗi provider có client/API key riêng; lock giới hạn gọi đồng thời.
 #   2. Exponential backoff: retry tự động khi bị 429 (rate limit)
 #      → giải quyết lỗi quota liên tục khi Executor chạy parallel
 #   3. Giữ nguyên interface cũ → backward compatible
@@ -20,7 +19,8 @@ import random
 import threading
 from typing import Optional
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from configs.settings import settings
 
@@ -33,19 +33,18 @@ class GeminiProvider:
     """
     Wrapper cho Google Gemini 2.5 Flash.
     
-    Thread-safe: dùng Lock toàn cục vì genai.configure() thay đổi
-    global state. Lock serialize tất cả API calls → cũng giúp giảm
-    rate limit errors (free tier: 15 req/min).
+    Each instance owns its client and API key. Calls remain serialized to
+    bound concurrent quota usage without changing global SDK configuration.
     
     Retry: exponential backoff cho lỗi 429/503/quota.
     """
     
-    # genai.configure() thay đổi global state → cần Lock
-    # Serialize cũng giúp tự nhiên rate-limit (tốt cho free tier)
+    # Retain bounded concurrency; the new SDK has no global configure().
     _config_lock = threading.Lock()
     
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key or settings.gemini_api_key
+        self.client = None
         if settings.demo_mode:
             print("⚠️  DEMO_MODE=true: Agents sẽ dùng fallback LLM.")
             self.model = None
@@ -53,9 +52,11 @@ class GeminiProvider:
             print("⚠️  GEMINI_API_KEY chưa được cấu hình! Agents sẽ dùng fallback.")
             self.model = None
         else:
-            with GeminiProvider._config_lock:
-                genai.configure(api_key=self.api_key)
-                self.model = genai.GenerativeModel(settings.gemini_model_id)
+            self.client = genai.Client(
+                api_key=self.api_key,
+                http_options=types.HttpOptions(timeout=30_000),
+            )
+            self.model = settings.gemini_model_id
 
     def _strict_mode(self) -> bool:
         return os.getenv("GEMINI_STRICT_ERRORS", "false").lower() == "true"
@@ -74,7 +75,6 @@ class GeminiProvider:
         for attempt in range(max_retries + 1):
             try:
                 with GeminiProvider._config_lock:
-                    genai.configure(api_key=self.api_key)
                     return fn()
             except (json.JSONDecodeError, TypeError):
                 # Lỗi parse → không retry
@@ -109,9 +109,10 @@ class GeminiProvider:
             return self._fallback_response(prompt)
         
         def _call():
-            response = self.model.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
                     temperature=temperature,
                     max_output_tokens=max_tokens,
                 ),
@@ -165,9 +166,10 @@ class GeminiProvider:
         
         # Strategy 1: JSON mode
         def _json_mode():
-            response = self.model.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
                     temperature=temp,
                     max_output_tokens=4096,
                     response_mime_type="application/json",
@@ -182,9 +184,10 @@ class GeminiProvider:
         
         # Strategy 2: Plain text → parse
         def _text_mode():
-            response = self.model.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
                     temperature=temp,
                     max_output_tokens=4096,
                 ),
