@@ -93,7 +93,42 @@ class RedisSimulator:
     def get_risk_score(self, account_id: str) -> float:
         """Lấy risk score hiện tại (default 0.3 nếu chưa có)"""
         return self._risk_scores.get(account_id, 0.3)
-    
+
+    # Shared-infrastructure lookups. Populated from the train split only, so a
+    # holdout transaction is scored against history that preceded it.
+    def count_accounts_for_device(self, device_id: str) -> int:
+        """Số tài khoản khác nhau đã dùng thiết bị này."""
+        return len(getattr(self, "_device_accounts", {}).get(device_id, ()))
+
+    def count_accounts_for_ip(self, ip_address: str) -> int:
+        """Số tài khoản khác nhau đã dùng địa chỉ IP này."""
+        return len(getattr(self, "_ip_accounts", {}).get(ip_address, ()))
+
+    def is_known_device(self, account_id: str, device_id: str) -> bool:
+        """Thiết bị đã từng xuất hiện ở tài khoản này chưa."""
+        known = getattr(self, "_account_devices", {}).get(account_id)
+        if not known:
+            # No history for this account: treat as known so a first-ever
+            # transaction is not flagged purely for having no past.
+            return True
+        return device_id in known
+
+    def register_infrastructure(self, rows) -> None:
+        """Index device and IP usage from historical rows."""
+        device_accounts: dict[str, set] = {}
+        ip_accounts: dict[str, set] = {}
+        account_devices: dict[str, set] = {}
+        for account_id, device_id, ip_address in rows:
+            if device_id:
+                device_accounts.setdefault(device_id, set()).add(account_id)
+                account_devices.setdefault(account_id, set()).add(device_id)
+            if ip_address:
+                ip_accounts.setdefault(ip_address, set()).add(account_id)
+        self._device_accounts = device_accounts
+        self._ip_accounts = ip_accounts
+        self._account_devices = account_devices
+
+
     def get_velocity(self, account_id: str, hours: int = 1) -> int:
         """Đếm số giao dịch trong N giờ qua"""
         if account_id not in self._velocity:
@@ -883,7 +918,52 @@ class RedisService:
             return 0.3
         else:
             return self._simulator.get_risk_score(account_id)
-    
+
+    # =================================================================
+    # SHARED INFRASTRUCTURE
+    # =================================================================
+
+    def count_accounts_for_device(self, device_id: str) -> int:
+        if self._mode == "real":
+            try:
+                return int(self._real_redis.scard(f"device_accounts:{device_id}") or 0)
+            except Exception:
+                return 0
+        return self._simulator.count_accounts_for_device(device_id)
+
+    def count_accounts_for_ip(self, ip_address: str) -> int:
+        if self._mode == "real":
+            try:
+                return int(self._real_redis.scard(f"ip_accounts:{ip_address}") or 0)
+            except Exception:
+                return 0
+        return self._simulator.count_accounts_for_ip(ip_address)
+
+    def is_known_device(self, account_id: str, device_id: str) -> bool:
+        if self._mode == "real":
+            try:
+                if not self._real_redis.exists(f"account_devices:{account_id}"):
+                    return True
+                return bool(self._real_redis.sismember(f"account_devices:{account_id}", device_id))
+            except Exception:
+                return True
+        return self._simulator.is_known_device(account_id, device_id)
+
+    def register_infrastructure(self, rows) -> None:
+        if self._mode == "real":
+            try:
+                pipe = self._real_redis.pipeline()
+                for account_id, device_id, ip_address in rows:
+                    if device_id:
+                        pipe.sadd(f"device_accounts:{device_id}", account_id)
+                        pipe.sadd(f"account_devices:{account_id}", device_id)
+                    if ip_address:
+                        pipe.sadd(f"ip_accounts:{ip_address}", account_id)
+                pipe.execute()
+            except Exception:
+                pass
+        self._simulator.register_infrastructure(rows)
+
     # =================================================================
     # VELOCITY
     # =================================================================
@@ -1067,7 +1147,7 @@ class RedisService:
                     if not acc_id:
                         continue
                     risk_category = profile.get("risk_category", "unknown")
-                    fraud_ratio = float(profile.get("fraud_ratio") or 0)
+                    fraud_ratio = float(profile.get("behaviour_risk_score") or 0)
                     pipe.hset(f"account:{acc_id}", mapping={
                         "name": str(profile.get("name", acc_id)),
                         "type": str(profile.get("account_type", "checking")),

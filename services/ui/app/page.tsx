@@ -67,6 +67,8 @@ export default function Home() {
   const [pipelineError, setPipelineError] = useState<string | null>(null);
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [datasetStatus, setDatasetStatus] = useState('Loading dataset scenarios');
+  const [serviceStatus, setServiceStatus] = useState('Connecting to backend...');
+  const [refreshKey, setRefreshKey] = useState(0);
   const escalatedRef = useRef(false);
   const seqRef = useRef(0);
 
@@ -84,9 +86,30 @@ export default function Home() {
         setDatasetStatus('Scenario API unavailable');
       }
     };
-    loadScenarios();
-    return () => controller.abort();
-  }, []);
+    const loadHealth = async () => {
+      setServiceStatus('Connecting to backend...');
+      try {
+        const res = await fetch(`${API_BASE}/api/health`, { signal: controller.signal });
+        if (!res.ok) throw new Error(`Health API returned ${res.status}`);
+        const data = await res.json();
+        const services = data.services || {};
+        const fallback = ['redis', 'neo4j', 'mongodb', 'chromadb'].some((name) => services[name] !== 'connected');
+        setServiceStatus(data.demo_mode ? 'Offline demo using synthetic data'
+          : fallback ? 'Some cloud services are unavailable; offline dataset evidence is in use'
+          : 'Cloud databases connected; Gemini access has not been verified');
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') return;
+        setServiceStatus('Backend unavailable. Free-tier hosting may need time to wake up.');
+      }
+    };
+    const timeout = setTimeout(() => {
+      controller.abort();
+      setDatasetStatus('Scenario API timed out');
+      setServiceStatus('Backend did not respond within 60 seconds. Retry the connection.');
+    }, 60_000);
+    Promise.all([loadScenarios(), loadHealth()]).finally(() => clearTimeout(timeout));
+    return () => { clearTimeout(timeout); controller.abort(); };
+  }, [refreshKey]);
 
   const pushEvent = useCallback((event: string, data?: Record<string, unknown>) => {
     seqRef.current += 1;
@@ -128,6 +151,7 @@ export default function Home() {
     const abortController = new AbortController();
 
     const runStream = async () => {
+      let receivedTerminal = false;
       try {
         const res = await fetch(`${API_BASE}/api/fraud-detection`, {
           method: 'POST',
@@ -157,13 +181,13 @@ export default function Home() {
             // Keep status-derived message.
           }
           setPipelineError(errorMessage);
-          setFraudResult({ status: 'blocked', score: 100, message: errorMessage });
+          setFraudResult({ status: 'escalate', score: 0, message: errorMessage });
           setIsProcessing(false);
           return;
         }
 
         const reader = res.body?.getReader();
-        if (!reader) return;
+        if (!reader) throw new Error('The response did not contain a result stream.');
 
         const decoder = new TextDecoder();
         let buffer = '';
@@ -228,8 +252,9 @@ export default function Home() {
               }
 
               if (eventName === 'complete') {
+                receivedTerminal = true;
                 const decision = String(eventData?.decision || '').toLowerCase();
-                const status = decision === 'allow' ? 'approved' : decision === 'escalate' ? 'escalate' : 'blocked';
+                const status = decision === 'allow' ? 'approved' : decision === 'block' ? 'blocked' : 'escalate';
                 const finalResult: FraudResult = {
                   status,
                   score: Math.round(((eventData?.investigation as { confidence?: number } | undefined)?.confidence || 0) * 100),
@@ -249,20 +274,27 @@ export default function Home() {
               }
 
               if (eventName === 'error') {
+                receivedTerminal = true;
                 const errorMsg = String(eventData?.message || 'Pipeline error occurred');
                 setPipelineError(errorMsg);
                 setFraudResult({ status: 'escalate', score: 0, message: errorMsg });
+                setIsProcessing(false);
               }
             } catch (parseErr) {
               console.warn('[Stream] Parse error:', parseErr, trimmed);
             }
+            if (receivedTerminal) {
+              await reader.cancel();
+              return;
+            }
           }
         }
+        if (!receivedTerminal) throw new Error('The connection closed before a decision was received. Retry the investigation.');
       } catch (err: unknown) {
         if (err instanceof Error && err.name === 'AbortError') return;
         const errorMsg = err instanceof Error ? err.message : 'Connection failed';
         setPipelineError(`Connection error: ${errorMsg}`);
-        setFraudResult({ status: 'blocked', score: 0, message: `Connection error: ${errorMsg}` });
+        setFraudResult({ status: 'escalate', score: 0, message: `Connection error: ${errorMsg}` });
         setIsProcessing(false);
       }
     };
@@ -293,7 +325,7 @@ export default function Home() {
               Dataset-driven fraud operations
             </div>
             <h1 className="text-2xl font-semibold tracking-tight text-white md:text-3xl">Fraud Detection Console</h1>
-            <p className="mt-1 text-sm text-slate-400">Real account IDs from final.csv, streamed through rule screening and agentic investigation.</p>
+            <p className="mt-1 text-sm text-slate-400">Synthetic PaySim transactions, streamed through rule screening and agentic investigation.</p>
           </div>
           <div className="grid grid-cols-3 gap-2 text-xs">
             <div className="rounded-md border border-slate-800 bg-slate-900 px-3 py-2">
@@ -310,6 +342,11 @@ export default function Home() {
             </div>
           </div>
         </header>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-800 bg-slate-950/60 px-4 py-3 text-sm text-slate-300" role="status">
+          <span>{serviceStatus}</span>
+          <button type="button" className="rounded border border-slate-700 px-3 py-1 hover:bg-slate-800" onClick={() => setRefreshKey((value) => value + 1)}>Retry connection</button>
+        </div>
 
         {pipelineError && (
           <div className="rounded-md border border-red-900/60 bg-red-950/50 px-4 py-3 text-sm text-red-100">{pipelineError}</div>

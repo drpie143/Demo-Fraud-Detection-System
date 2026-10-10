@@ -136,36 +136,27 @@ def create_fastapi_app():
         from infrastructure.databases.mongodb import mongodb_client
         from infrastructure.databases.neo4j import neo4j_client
         from infrastructure.databases.simulators import redis_service
+        from infrastructure.health import runtime_health
+
+        services = {
+            "redis": "connected" if redis_service.is_connected else "simulator",
+            "neo4j": "connected" if neo4j_client.is_connected else "simulator",
+            "mongodb": "connected" if mongodb_client.is_connected else "simulator",
+            "chromadb": "connected" if vector_store.collection else "simulator",
+            "gemini": "configured" if not runtime_settings.demo_mode and any(
+                [runtime_settings.gemini_api_key, runtime_settings.gemini_api_key_planner,
+                 runtime_settings.gemini_api_key_executor, runtime_settings.gemini_api_key_executor_pool,
+                 runtime_settings.gemini_api_key_detective, runtime_settings.gemini_api_key_vision,
+                 runtime_settings.gemini_api_key_report]
+            ) else "fallback",
+        }
 
         return {
-            "status": "healthy",
-            "mode": "real_services" if not runtime_settings.demo_mode else "demo_simulator",
+            **runtime_health(runtime_settings.demo_mode, services),
+            "gemini_check": "configuration-only",
             "demo_mode": runtime_settings.demo_mode,
             "auto_seed_on_startup": runtime_settings.auto_seed_on_startup,
-            "services": {
-                "redis": "connected" if redis_service.is_connected else "simulator",
-                "neo4j": "connected" if neo4j_client.is_connected else "simulator",
-                "mongodb": "connected" if mongodb_client.is_connected else "simulator",
-                "chromadb": "connected" if vector_store.collection else "simulator",
-                "gemini": (
-                    "configured"
-                    if (
-                        not runtime_settings.demo_mode
-                        and any(
-                            [
-                                runtime_settings.gemini_api_key,
-                                runtime_settings.gemini_api_key_planner,
-                                runtime_settings.gemini_api_key_executor,
-                                runtime_settings.gemini_api_key_executor_pool,
-                                runtime_settings.gemini_api_key_detective,
-                                runtime_settings.gemini_api_key_vision,
-                                runtime_settings.gemini_api_key_report,
-                            ]
-                        )
-                    )
-                    else "fallback"
-                ),
-            },
+            "services": services,
             "service_errors": {
                 "mongodb": (
                     mongodb_client.last_error[:700]
@@ -238,7 +229,7 @@ def create_fastapi_app():
                 "name": profile.get("name", "Unknown"),
                 "kyc_status": profile.get("kyc_status", "verified" if profile.get("risk_category") == "low" else "review"),
                 "risk_category": profile.get("risk_category", "unknown"),
-                "fraud_ratio": profile.get("fraud_ratio", 0),
+                "behaviour_risk_score": profile.get("behaviour_risk_score", 0),
             },
             "accounts": [
                 {

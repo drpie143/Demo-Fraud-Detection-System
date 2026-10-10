@@ -41,6 +41,59 @@ def _risk_from_ratio(fraud_ratio: float, *, receiver: bool = False) -> str:
     return "low"
 
 
+def behavioural_risk_score(grp: pd.DataFrame) -> float:
+    """Score an account from how it behaves, not from whether it was fraud.
+
+    The seed used to set an account's risk directly from its historical
+    `isFraud` rate. That is temporally clean -- it only reads the train split --
+    but it hands the investigation agents a copy of the answer for any account
+    they have seen before: on the holdout, "this sender has prior fraud" alone
+    predicted fraud with 0.97 precision.
+
+    A bank does not know the label either. It scores accounts on observable
+    behaviour, which correlates with fraud without being it.
+    """
+    n = len(grp)
+    if n == 0:
+        return 0.1
+
+    velocity = min(n / 8.0, 1.0)
+    drained = float((pd.to_numeric(grp["sender_balance_after"], errors="coerce") <= 0).mean())
+    risky_types = float(grp["type"].isin(["TRANSFER", "CASH_OUT"]).mean())
+
+    amounts = pd.to_numeric(grp["amount"], errors="coerce")
+    balances = pd.to_numeric(grp["sender_balance_before"], errors="coerce").replace(0, pd.NA)
+    ratio = (amounts / balances).dropna()
+    drain_ratio = float(ratio.clip(0, 1).mean()) if len(ratio) else 0.0
+
+    device_churn = min(grp["device_id"].nunique() / 4.0, 1.0) if "device_id" in grp else 0.0
+    ip_churn = min(grp["ip_address"].nunique() / 4.0, 1.0) if "ip_address" in grp else 0.0
+    weak_auth = (
+        float((grp["auth_method"] == "SMS_OTP").mean()) if "auth_method" in grp else 0.0
+    )
+
+    score = (
+        0.22 * velocity
+        + 0.20 * drained
+        + 0.14 * risky_types
+        + 0.16 * drain_ratio
+        + 0.12 * device_churn
+        + 0.08 * ip_churn
+        + 0.08 * weak_auth
+    )
+    return round(min(0.98, max(0.02, score)), 3)
+
+
+def _risk_from_behaviour(score: float) -> str:
+    if score >= 0.62:
+        return "critical"
+    if score >= 0.48:
+        return "high"
+    if score >= 0.32:
+        return "medium"
+    return "low"
+
+
 def build_seed_from_dataframe(df: pd.DataFrame, *, seed: int = 42) -> dict[str, list[dict]]:
     """Build DB seed data from a train split only.
 
@@ -54,8 +107,11 @@ def build_seed_from_dataframe(df: pd.DataFrame, *, seed: int = 42) -> dict[str, 
 
     for acc_id, grp in df.groupby("sender_account_no"):
         seen.add(str(acc_id))
+        # Risk comes from behaviour. The historical fraud rate is still recorded
+        # for reporting, but nothing downstream is allowed to score on it.
+        behaviour_score = behavioural_risk_score(grp)
         fraud_ratio = float(grp["isFraud"].mean())
-        risk = _risk_from_ratio(fraud_ratio)
+        risk = _risk_from_behaviour(behaviour_score)
         last_row = grp.iloc[-1]
         type_mode = grp["type"].mode().iloc[0] if len(grp) else "TRANSFER"
         account_type = {
@@ -89,7 +145,10 @@ def build_seed_from_dataframe(df: pd.DataFrame, *, seed: int = 42) -> dict[str, 
                 "lat": _maybe_float(last_row.get("geolocation_lat")),
                 "long": _maybe_float(last_row.get("geolocation_long")),
             },
-            "fraud_ratio": round(fraud_ratio, 2),
+            "behaviour_risk_score": behaviour_score,
+            # Reporting only. Nothing downstream may score on this: it is the
+            # label, and using it would make the agents look prescient.
+            "fraud_ratio_reporting_only": round(fraud_ratio, 2),
         })
 
     for acc_id in df["receiver_account_no"].dropna().unique():
@@ -98,6 +157,12 @@ def build_seed_from_dataframe(df: pd.DataFrame, *, seed: int = 42) -> dict[str, 
             continue
         recv_txns = df[df["receiver_account_no"] == acc_id]
         fraud_ratio = float(recv_txns["isFraud"].mean()) if len(recv_txns) else 0.0
+        # Receivers have no sending behaviour to score, so risk comes from how
+        # much inbound value they concentrate -- a mule account collects from
+        # many senders. Still not the label.
+        inbound = len(recv_txns)
+        distinct_senders = int(recv_txns["sender_account_no"].nunique()) if inbound else 0
+        receiver_score = min(0.95, 0.05 + 0.12 * distinct_senders + 0.04 * inbound)
         profiles.append({
             "_id": acc_id,
             "customer_id": acc_id,
@@ -108,11 +173,12 @@ def build_seed_from_dataframe(df: pd.DataFrame, *, seed: int = 42) -> dict[str, 
             "avg_transaction_amount": 0.0,
             "typical_channels": [],
             "typical_locations": ["Ho Chi Minh City"],
-            "risk_category": _risk_from_ratio(fraud_ratio, receiver=True),
+            "risk_category": _risk_from_behaviour(receiver_score),
             "device_id": None,
             "ip_address": None,
             "geolocation": None,
-            "fraud_ratio": round(fraud_ratio, 2),
+            "behaviour_risk_score": round(receiver_score, 3),
+            "fraud_ratio_reporting_only": round(fraud_ratio, 2),
         })
 
     now = datetime.now()
@@ -184,7 +250,7 @@ def apply_seed_to_simulators(data: dict[str, list[dict]], *, redis_service=None)
                 "type": "account",
                 "label": profile.get("name", account_id),
                 "risk": profile.get("risk_category", "unknown"),
-                "fraud_ratio": profile.get("fraud_ratio", 0),
+                "behaviour_risk_score": profile.get("behaviour_risk_score", 0),
             }
 
     transfer_map: dict[tuple[str, str], dict[str, float | int]] = defaultdict(
@@ -226,21 +292,23 @@ def apply_seed_to_simulators(data: dict[str, list[dict]], *, redis_service=None)
         and p.get("risk_category") == "low"
         and float(p.get("avg_monthly_transactions") or 0) > 0
     }
+    # A blacklist is a record of confirmed investigations, so deriving it from
+    # train-split labels is realistic. It is deliberately narrow, and evaluation
+    # reports seen-before and first-seen accounts separately, because catching a
+    # known mule says nothing about what the investigation agents add.
     blacklisted = {
         p["customer_id"]
         for p in profiles
-        if p.get("customer_id")
-        and (p.get("risk_category") == "critical" or float(p.get("fraud_ratio") or 0) >= 0.8)
+        if p.get("customer_id") and float(p.get("fraud_ratio_reporting_only") or 0) >= 0.8
     }
-    risk_map = {"low": 0.08, "medium": 0.45, "high": 0.75, "critical": 0.95}
+    # Risk scores are behavioural. Deriving them from the label would hand every
+    # repeat account's answer to the agents as "evidence".
     risk_scores = {}
     for profile in profiles:
         account_id = profile.get("customer_id")
         if not account_id:
             continue
-        fraud_ratio = float(profile.get("fraud_ratio") or 0)
-        base = risk_map.get(profile.get("risk_category"), 0.3)
-        risk_scores[account_id] = round(max(base, min(0.98, 0.2 + fraud_ratio * 0.78)), 3)
+        risk_scores[account_id] = float(profile.get("behaviour_risk_score") or 0.1)
 
     now = datetime.now()
     velocity = {}
@@ -261,6 +329,21 @@ def apply_seed_to_simulators(data: dict[str, list[dict]], *, redis_service=None)
         target._blacklist = set(blacklisted)
         target._risk_scores = dict(risk_scores)
         target._velocity = dict(velocity)
+
+    # Index shared devices and addresses from the train split so Phase 1 can ask
+    # "how many accounts use this device" instead of matching a demo-data prefix
+    # that appears on no real row.
+    infrastructure_rows = [
+        (
+            str(raw.get("sender_account_no") or ""),
+            _maybe_str(raw.get("device_id")),
+            _maybe_str(raw.get("ip_address")),
+        )
+        for raw in raw_edges
+    ]
+    for target in [redis_sim, redis_service]:
+        if target is not None and hasattr(target, "register_infrastructure"):
+            target.register_infrastructure(infrastructure_rows)
 
     return {"profiles": len(profiles), "transactions": len(transactions), "edges": len(raw_edges)}
 
